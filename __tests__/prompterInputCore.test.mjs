@@ -372,42 +372,6 @@ test("captureInputOnce recognizes /settings command", async () => {
   assert.equal(result.type, "settings");
 });
 
-test("captureInputOnce recognizes /workspace command without path", async () => {
-  const stdin = new FakeTTYInput();
-  const stdout = new FakeTTYOutput();
-
-  const pending = captureInputOnce({
-    stdin,
-    stdout,
-    pasteTimeoutMs: 200,
-  });
-
-  stdin.sendBytes(Buffer.from("/workspace", "utf8"));
-  stdin.sendBytes(Buffer.from([0x0d])); // enter
-
-  const result = await pending;
-  assert.equal(result.type, "workspace");
-  assert.equal(result.text, "");
-});
-
-test("captureInputOnce recognizes /workspace with inline path", async () => {
-  const stdin = new FakeTTYInput();
-  const stdout = new FakeTTYOutput();
-
-  const pending = captureInputOnce({
-    stdin,
-    stdout,
-    pasteTimeoutMs: 200,
-  });
-
-  stdin.sendBytes(Buffer.from("/workspace ~/projects/foo", "utf8"));
-  stdin.sendBytes(Buffer.from([0x0d])); // enter
-
-  const result = await pending;
-  assert.equal(result.type, "workspace");
-  assert.equal(result.text, "~/projects/foo");
-});
-
 test("captureInputOnce recognizes /discover command", async () => {
   const stdin = new FakeTTYInput();
   const stdout = new FakeTTYOutput();
@@ -470,24 +434,3 @@ test("captureInputOnce shows command suggestions on slash", async () => {
   assert.equal(result.type, "quit");
 });
 
-test("captureInputOnce tab-completes /workspace with trailing space", async () => {
-  const stdin = new FakeTTYInput();
-  const stdout = new FakeTTYOutput();
-
-  const pending = captureInputOnce({
-    stdin,
-    stdout,
-    pasteTimeoutMs: 200,
-  });
-
-  // Type "/w" then Tab — should autocomplete to "/workspace "
-  stdin.sendBytes(Buffer.from("/w", "utf8"));
-  stdin.sendBytes(Buffer.from([0x09])); // tab
-  // Now type a path and submit
-  stdin.sendBytes(Buffer.from("~/projects", "utf8"));
-  stdin.sendBytes(Buffer.from([0x0d])); // enter
-
-  const result = await pending;
-  assert.equal(result.type, "workspace");
-  assert.equal(result.text, "~/projects");
-});

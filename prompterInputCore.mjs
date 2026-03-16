@@ -6,7 +6,6 @@ const ENTER_ESC_13_TILDE = Buffer.from([0x1b, 0x5b, 0x31, 0x33, 0x7e]); // ESC [
 const SLASH_COMMANDS = [
   { cmd: "/help", desc: "Show help" },
   { cmd: "/settings", desc: "Configure agent & model" },
-  { cmd: "/workspace", desc: "Change workspace directory" },
   { cmd: "/discover", desc: "Re-discover expertise categories" },
   { cmd: "/quit", desc: "Exit" },
 ];
@@ -389,11 +388,6 @@ export async function captureInputOnce({
           finish({ type: "settings" });
           return;
         }
-        if (command === "/workspace" || command.startsWith("/workspace ")) {
-          const arg = command.slice("/workspace".length).trim();
-          finish({ type: "workspace", text: arg });
-          return;
-        }
         if (command === "/discover") {
           finish({ type: "discover" });
           return;
@@ -463,10 +457,6 @@ export async function captureInputOnce({
           const completion = matches[0].cmd;
           for (const ch of completion) {
             inputEntries.push({ ch, source: "typing" });
-          }
-          // Add trailing space for commands that accept args
-          if (matches[0].cmd === "/workspace") {
-            inputEntries.push({ ch: " ", source: "typing" });
           }
         } else if (matches.length > 1) {
           // Multiple matches — complete common prefix

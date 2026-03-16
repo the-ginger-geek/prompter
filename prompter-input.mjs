@@ -9,7 +9,6 @@ const EXIT_CODES = {
   RESET: 22,
   FAIL_CLOSED: 23,
   SETTINGS: 24,
-  WORKSPACE: 25,
   DISCOVER: 26,
   ERROR: 1,
 };
@@ -93,10 +92,6 @@ async function main() {
       process.exit(EXIT_CODES.SETTINGS);
     }
 
-    if (result.type === "workspace") {
-      await writeFile(options.output, result.text || "", "utf8");
-      process.exit(EXIT_CODES.WORKSPACE);
-    }
 
     if (result.type === "discover") {
       process.exit(EXIT_CODES.DISCOVER);

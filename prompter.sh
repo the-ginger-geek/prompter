@@ -201,142 +201,93 @@ colorize_output() {
 # Windowed output — agent output rendered in a fixed terminal viewport
 #
 # Strategy: agent writes to a log file only (no terminal output). A background
-# renderer periodically tails the file and redraws the last N lines in a fixed
-# window area. This avoids scroll region issues with agents that write directly
-# to the terminal or emit their own ANSI sequences.
+# renderer redraws the full frame + tails the log every 0.1s. Re-reads terminal
+# dimensions each tick so resize is handled automatically.
 # ---------------------------------------------------------------------------
 _WINDOW_ACTIVE=false
-_WINDOW_ROWS=0
-_WINDOW_COLS=0
-_WINDOW_CONTENT_TOP=0
-_WINDOW_CONTENT_BOTTOM=0
-_WINDOW_STATUS_ROW=0
 _WINDOW_START_TIME=0
 _WINDOW_RENDER_PID=""
 _WINDOW_LOG_FILE=""
+_WINDOW_HEADER=""
+_WINDOW_SUB_HEADER=""
+_WINDOW_AGENT=""
+_WINDOW_CATEGORY=""
 
 setup_output_window() {
   local header="$1"
   local sub_header="${2:-}"
+  local agent="${3:-$SETTING_AGENT}"
+  local category="${4:-}"
 
   if [[ -z "$T_RESET" ]] || ! command -v tput >/dev/null 2>&1; then
     printf '\n  %s\n\n' "$header"
     return 1
   fi
 
-  local rows cols
+  local rows
   rows=$(tput lines 2>/dev/null) || rows=24
-  cols=$(tput cols 2>/dev/null) || cols=80
-
-  if [[ $rows -lt 12 ]]; then
+  if [[ $rows -lt 10 ]]; then
     printf '\n  %s\n\n' "$header"
     return 1
   fi
 
-  # Layout:
-  #   Row 1:          header
-  #   Row 2:          sub-header
-  #   Row 3:          top border ────
-  #   Row 4..(R-3):   content area (last N lines of agent output)
-  #   Row (R-2):      bottom border ────
-  #   Row (R-1):      status line (spinner + elapsed)
-  #   Row R:          (cursor park)
-
-  local content_top=4
-  local content_bottom=$((rows - 3))
-  local status_row=$((rows - 2))
-  local border_char
-  border_char="$(printf '%.0s─' $(seq 1 "$cols"))"
-
-  # Switch to alternate screen buffer — preserves original terminal content
+  # Switch to alternate screen buffer
   printf '\e[?1049h'
-  printf '\e[2J\e[H'
-
-  # Header
-  printf '  %s%s%s\n' "$T_BOLD" "$header" "$T_RESET"
-
-  # Sub-header
-  if [[ -n "$sub_header" ]]; then
-    printf '  %s%s%s\n' "$T_DIM" "$sub_header" "$T_RESET"
-  else
-    printf '\n'
-  fi
-
-  # Top border
-  printf '%s%s%s' "$T_DIM" "$border_char" "$T_RESET"
-
-  # Bottom border
-  printf '\e[%d;1H' "$((content_bottom + 1))"
-  printf '%s%s%s' "$T_DIM" "$border_char" "$T_RESET"
-
-  # Initial status
-  printf '\e[%d;1H' "$status_row"
-  printf '  %s⠋ Starting...%s' "$T_CYAN" "$T_RESET"
-
-  # Hide cursor
   printf '\e[?25l'
 
   _WINDOW_ACTIVE=true
-  _WINDOW_ROWS=$rows
-  _WINDOW_COLS=$cols
-  _WINDOW_CONTENT_TOP=$content_top
-  _WINDOW_CONTENT_BOTTOM=$content_bottom
-  _WINDOW_STATUS_ROW=$status_row
   _WINDOW_START_TIME=$(date +%s)
+  _WINDOW_HEADER="$header"
+  _WINDOW_SUB_HEADER="$sub_header"
+  _WINDOW_AGENT="$agent"
+  _WINDOW_CATEGORY="$category"
 
   return 0
 }
 
-# Background process: renders log file tail + status into the window
 _start_window_renderer() {
   local log_file="$1"
   _WINDOW_LOG_FILE="$log_file"
 
-  _window_render_loop "$log_file" &
+  _window_render_loop "$log_file" \
+    "$_WINDOW_START_TIME" "$_WINDOW_HEADER" "$_WINDOW_SUB_HEADER" \
+    "$_WINDOW_AGENT" "$_WINDOW_CATEGORY" &
   _WINDOW_RENDER_PID=$!
   disown "$_WINDOW_RENDER_PID" 2>/dev/null || true
 }
 
 _window_render_loop() {
   local log_file="$1"
-  local content_top=$_WINDOW_CONTENT_TOP
-  local content_bottom=$_WINDOW_CONTENT_BOTTOM
-  local status_row=$_WINDOW_STATUS_ROW
-  local cols=$_WINDOW_COLS
-  local visible_lines=$((content_bottom - content_top + 1))
-  local start_time=$_WINDOW_START_TIME
+  local start_time="$2"
+  local header="$3"
+  local sub_header="$4"
+  local agent="$5"
+  local category="$6"
 
   local frames=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
   local frame_i=0
-  local last_line_count=0
 
   while true; do
-    sleep 0.5
+    sleep 0.1
 
-    # ---- Render content area ----
-    local current_lines=0
-    if [[ -f "$log_file" ]]; then
-      # Get last N lines, strip ANSI codes, truncate to terminal width
-      local content
-      content="$(tail -n "$visible_lines" "$log_file" 2>/dev/null | \
-        sed $'s/\x1b\[[0-9;]*[a-zA-Z]//g' | \
-        cut -c1-"$((cols - 1))")"
+    # Re-read terminal size every tick — handles resize
+    local rows cols
+    rows=$(tput lines 2>/dev/null) || rows=24
+    cols=$(tput cols 2>/dev/null) || cols=80
 
-      local row=$content_top
-      while IFS= read -r line; do
-        printf '\e[%d;1H\e[2K %s%s%s' "$row" "$T_DIM" "$line" "$T_RESET"
-        row=$((row + 1))
-        current_lines=$((current_lines + 1))
-      done <<< "$content"
-
-      # Clear remaining rows if content shrank
-      while [[ $row -le $content_bottom ]]; do
-        printf '\e[%d;1H\e[2K' "$row"
-        row=$((row + 1))
-      done
+    # Layout:  row 1=header, 2=sub, 3=border, 4..(R-2)=content, (R-1)=border, R=status
+    local content_top=4
+    local content_bottom=$((rows - 2))
+    local visible_lines=$((content_bottom - content_top + 1))
+    if [[ $visible_lines -lt 1 ]]; then
+      visible_lines=1
+      content_bottom=$content_top
     fi
 
-    # ---- Render status line ----
+    local border
+    border="$(printf '%.0s─' $(seq 1 "$cols"))"
+
+    # Elapsed
     local now elapsed_s mins secs elapsed_str
     now=$(date +%s)
     elapsed_s=$((now - start_time))
@@ -348,8 +299,90 @@ _window_render_loop() {
       elapsed_str="${secs}s"
     fi
 
-    printf '\e[%d;1H\e[2K' "$status_row"
-    printf '  %s%s Running...  %s%s' "$T_CYAN" "${frames[$frame_i]}" "$elapsed_str" "$T_RESET"
+    # Log line count
+    local total_lines=0
+    if [[ -f "$log_file" ]]; then
+      total_lines=$(wc -l < "$log_file" 2>/dev/null | tr -d ' ')
+    fi
+
+    # ---- Row 1: Header ----
+    printf '\e[1;1H\e[2K'
+    printf '  %s%s%s%s  %s%s' "$T_BOLD" "$T_CYAN" "$header" "$T_RESET" "$T_DIM" "$T_RESET"
+
+    # ---- Row 2: Sub-header with metadata ----
+    printf '\e[2;1H\e[2K'
+    local meta=""
+    if [[ -n "$agent" ]]; then
+      meta="${T_MAGENTA}${agent}${T_RESET}"
+    fi
+    if [[ -n "$category" ]]; then
+      meta="${meta}  ${T_DIM}│${T_RESET}  ${T_YELLOW}${category}${T_RESET}"
+    fi
+    if [[ -n "$sub_header" ]]; then
+      meta="${meta}  ${T_DIM}│  ${sub_header}${T_RESET}"
+    fi
+    printf '  %s' "$meta"
+
+    # ---- Row 3: Top border ----
+    printf '\e[3;1H\e[2K'
+    printf '%s%s%s' "$T_DIM" "$border" "$T_RESET"
+
+    # ---- Content area (bottom-anchored) ----
+    if [[ -f "$log_file" ]] && [[ $total_lines -gt 0 ]]; then
+      local content
+      content="$(tail -n "$visible_lines" "$log_file" 2>/dev/null | \
+        sed $'s/\x1b\[[0-9;]*[a-zA-Z]//g' | \
+        cut -c1-"$((cols - 4))")"
+
+      local line_count=0
+      local lines_arr=()
+      while IFS= read -r _cline; do
+        lines_arr+=("$_cline")
+        line_count=$((line_count + 1))
+      done <<< "$content"
+
+      local start_row=$((content_bottom - line_count + 1))
+      if [[ $start_row -lt $content_top ]]; then
+        start_row=$content_top
+      fi
+
+      # Clear empty rows above content
+      local row=$content_top
+      while [[ $row -lt $start_row ]]; do
+        printf '\e[%d;1H\e[2K' "$row"
+        row=$((row + 1))
+      done
+
+      # Render content lines
+      local arr_i=$(( line_count - (content_bottom - start_row + 1) ))
+      if [[ $arr_i -lt 0 ]]; then arr_i=0; fi
+      row=$start_row
+      while [[ $arr_i -lt $line_count ]] && [[ $row -le $content_bottom ]]; do
+        printf '\e[%d;1H\e[2K  %s%s%s' "$row" "$T_DIM" "${lines_arr[$arr_i]}" "$T_RESET"
+        row=$((row + 1))
+        arr_i=$((arr_i + 1))
+      done
+    else
+      # Empty — clear content area
+      local row=$content_top
+      while [[ $row -le $content_bottom ]]; do
+        printf '\e[%d;1H\e[2K' "$row"
+        row=$((row + 1))
+      done
+    fi
+
+    # ---- Bottom border ----
+    printf '\e[%d;1H\e[2K' "$((rows - 1))"
+    printf '%s%s%s' "$T_DIM" "$border" "$T_RESET"
+
+    # ---- Status bar ----
+    printf '\e[%d;1H\e[2K' "$rows"
+    printf '  %s%s%s %sRunning%s  %s%s%s%s' \
+      "$T_CYAN" "${frames[$frame_i]}" "$T_RESET" \
+      "$T_BOLD" "$T_RESET" \
+      "$T_DIM" "$elapsed_str" \
+      "  │  ${total_lines} lines output" \
+      "$T_RESET"
 
     frame_i=$(( (frame_i + 1) % ${#frames[@]} ))
   done
@@ -369,25 +402,16 @@ teardown_output_window() {
     _WINDOW_RENDER_PID=""
   fi
 
-  # Final render of content
-  if [[ -f "${_WINDOW_LOG_FILE:-}" ]]; then
-    local visible_lines=$((_WINDOW_CONTENT_BOTTOM - _WINDOW_CONTENT_TOP + 1))
-    local content
-    content="$(tail -n "$visible_lines" "$_WINDOW_LOG_FILE" 2>/dev/null | \
-      sed $'s/\x1b\[[0-9;]*[a-zA-Z]//g' | \
-      cut -c1-"$((_WINDOW_COLS - 1))")"
-    local row=$_WINDOW_CONTENT_TOP
-    while IFS= read -r line; do
-      printf '\e[%d;1H\e[2K %s%s%s' "$row" "$T_DIM" "$line" "$T_RESET"
-      row=$((row + 1))
-    done <<< "$content"
-    while [[ $row -le $_WINDOW_CONTENT_BOTTOM ]]; do
-      printf '\e[%d;1H\e[2K' "$row"
-      row=$((row + 1))
-    done
-  fi
+  # Re-read terminal size for final render
+  local rows cols
+  rows=$(tput lines 2>/dev/null) || rows=24
+  cols=$(tput cols 2>/dev/null) || cols=80
 
-  # Elapsed time
+  local content_top=4
+  local content_bottom=$((rows - 2))
+  local visible_lines=$((content_bottom - content_top + 1))
+
+  # Elapsed
   local now elapsed_s mins secs elapsed_str
   now=$(date +%s)
   elapsed_s=$((now - _WINDOW_START_TIME))
@@ -399,24 +423,83 @@ teardown_output_window() {
     elapsed_str="${secs}s"
   fi
 
-  # Update status line with result
-  printf '\e[%d;1H\e[2K' "$_WINDOW_STATUS_ROW"
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf '  %s%s✓ Done%s  %s%s%s' "$T_BOLD" "$T_GREEN" "$T_RESET" "$T_DIM" "$elapsed_str" "$T_RESET"
-  else
-    printf '  %s%s✗ Failed%s (exit %s)  %s%s%s' "$T_BOLD" "$T_RED" "$T_RESET" "$exit_code" "$T_DIM" "$elapsed_str" "$T_RESET"
+  local total_lines=0
+  if [[ -f "${_WINDOW_LOG_FILE:-}" ]]; then
+    total_lines=$(wc -l < "$_WINDOW_LOG_FILE" 2>/dev/null | tr -d ' ')
   fi
 
-  # Show cursor, wait for user to see the result
+  local border
+  border="$(printf '%.0s─' $(seq 1 "$cols"))"
+
+  # ---- Final frame ----
+  # Header
+  printf '\e[1;1H\e[2K'
+  printf '  %s%s%s%s' "$T_BOLD" "$T_CYAN" "$_WINDOW_HEADER" "$T_RESET"
+
+  # Sub-header
+  printf '\e[2;1H\e[2K'
+  local meta=""
+  [[ -n "$_WINDOW_AGENT" ]] && meta="${T_MAGENTA}${_WINDOW_AGENT}${T_RESET}"
+  [[ -n "$_WINDOW_CATEGORY" ]] && meta="${meta}  ${T_DIM}│${T_RESET}  ${T_YELLOW}${_WINDOW_CATEGORY}${T_RESET}"
+  [[ -n "$_WINDOW_SUB_HEADER" ]] && meta="${meta}  ${T_DIM}│  ${_WINDOW_SUB_HEADER}${T_RESET}"
+  printf '  %s' "$meta"
+
+  # Top border
+  printf '\e[3;1H\e[2K%s%s%s' "$T_DIM" "$border" "$T_RESET"
+
+  # Final content render (bottom-anchored)
+  if [[ -f "${_WINDOW_LOG_FILE:-}" ]] && [[ $total_lines -gt 0 ]]; then
+    local content
+    content="$(tail -n "$visible_lines" "$_WINDOW_LOG_FILE" 2>/dev/null | \
+      sed $'s/\x1b\[[0-9;]*[a-zA-Z]//g' | \
+      cut -c1-"$((cols - 4))")"
+    local lines_arr=()
+    local line_count=0
+    while IFS= read -r _cline; do
+      lines_arr+=("$_cline")
+      line_count=$((line_count + 1))
+    done <<< "$content"
+    local start_row=$((content_bottom - line_count + 1))
+    [[ $start_row -lt $content_top ]] && start_row=$content_top
+    local row=$content_top
+    while [[ $row -lt $start_row ]]; do
+      printf '\e[%d;1H\e[2K' "$row"
+      row=$((row + 1))
+    done
+    local arr_i=$(( line_count - (content_bottom - start_row + 1) ))
+    [[ $arr_i -lt 0 ]] && arr_i=0
+    row=$start_row
+    while [[ $arr_i -lt $line_count ]] && [[ $row -le $content_bottom ]]; do
+      printf '\e[%d;1H\e[2K  %s%s%s' "$row" "$T_DIM" "${lines_arr[$arr_i]}" "$T_RESET"
+      row=$((row + 1))
+      arr_i=$((arr_i + 1))
+    done
+  fi
+
+  # Bottom border
+  printf '\e[%d;1H\e[2K%s%s%s' "$((rows - 1))" "$T_DIM" "$border" "$T_RESET"
+
+  # Final status bar
+  printf '\e[%d;1H\e[2K' "$rows"
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf '  %s%s✓ Done%s  %s%s  │  %s lines output%s' \
+      "$T_BOLD" "$T_GREEN" "$T_RESET" "$T_DIM" "$elapsed_str" "$total_lines" "$T_RESET"
+  else
+    printf '  %s%s✗ Failed%s %s(exit %s)%s  %s%s  │  %s lines output%s' \
+      "$T_BOLD" "$T_RED" "$T_RESET" "$T_DIM" "$exit_code" "$T_RESET" \
+      "$T_DIM" "$elapsed_str" "$total_lines" "$T_RESET"
+  fi
+
+  # Show cursor, wait for keypress
   printf '\e[?25h'
-  printf '\e[%d;1H' "$_WINDOW_ROWS"
 
   if [[ -t 0 ]]; then
-    printf '\n  %sPress any key to continue...%s' "$T_DIM" "$T_RESET"
+    printf '\e[%d;1H' "$rows"
+    printf '  %s%s│  Press any key...%s' "$T_DIM" "" "$T_RESET"
     read -r -n 1 -s </dev/tty 2>/dev/null || true
   fi
 
-  # Leave alternate screen — restores original terminal content
+  # Leave alternate screen
   printf '\e[?1049l'
 
   _WINDOW_ACTIVE=false
@@ -432,7 +515,6 @@ ${T_BOLD}Prompter CLI${T_RESET}
 ${T_BOLD}Commands${T_RESET}
   /help             Show this help
   /settings         Configure agent, mode, and model
-  /workspace [path] Change workspace directory (tab-completes)
   /discover         Re-discover project expertise categories
   /quit             Exit the CLI
 
@@ -440,10 +522,6 @@ ${T_BOLD}Usage${T_RESET}
   ${T_DIM}Interactive:${T_RESET}   ./prompter.sh
   ${T_DIM}One-shot:${T_RESET}     ./prompter.sh "your prompt"
   ${T_DIM}Pipe:${T_RESET}         echo "your prompt" | ./prompter.sh
-  ${T_DIM}Workspace:${T_RESET}    ./prompter.sh -w /path/to/repo "your prompt"
-
-${T_BOLD}Options${T_RESET}
-  -w, --workspace <dir>  Set workspace directory (default: cwd)
 
 ${T_BOLD}Agents${T_RESET}
   codex      OpenAI Codex CLI (default)
@@ -485,7 +563,7 @@ print(len(cats))
     printf '  %sExperts:%s    %s categories  %s(/discover to refresh)%s\n' "$T_DIM" "$T_RESET" "$cat_count" "$T_DIM" "$T_RESET"
   fi
   printf '\n'
-  printf '  %s/help%s for commands, %s/settings%s to configure, %s/workspace%s to switch repos.\n\n' \
+  printf '  %s/help%s for commands, %s/settings%s to configure, %s/discover%s for categories.\n\n' \
     "$T_BOLD" "$T_RESET" "$T_BOLD" "$T_RESET" "$T_BOLD" "$T_RESET"
 }
 
@@ -520,67 +598,6 @@ sha256_of_text() {
   printf '%s' "$text" | shasum -a 256 | awk '{print $1}'
 }
 
-# ---------------------------------------------------------------------------
-# Workspace detection & directory selection
-# ---------------------------------------------------------------------------
-detect_workspace() {
-  if git -C "$WORKSPACE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    return 0
-  fi
-
-  # Not a git repo — prompt for directory if interactive
-  if [[ ! -t 0 ]]; then
-    return 0  # non-interactive, just use cwd
-  fi
-
-  printf '\n' >/dev/tty
-  printf '  %s%sNot in a git repository.%s\n' "$T_BOLD" "$T_YELLOW" "$T_RESET" >/dev/tty
-  printf '\n' >/dev/tty
-  printf '  %s[1]%s Enter a directory path\n' "$T_BOLD" "$T_RESET" >/dev/tty
-  printf '  %s[2]%s Continue with current directory (%s)\n' "$T_BOLD" "$T_RESET" "$WORKSPACE_DIR" >/dev/tty
-  printf '  %s[q]%s Quit\n' "$T_BOLD" "$T_RESET" >/dev/tty
-  printf '\n' >/dev/tty
-  printf '  %sChoice%s [1/2/q]: ' "$T_BOLD" "$T_RESET" >/dev/tty
-
-  local choice
-  read -r -n 1 choice </dev/tty 2>/dev/null || choice=""
-  printf '\n' >/dev/tty
-
-  case "$choice" in
-    1)
-      printf '  %sPath:%s ' "$T_BOLD" "$T_RESET" >/dev/tty
-      local entered_path
-      read -r -e entered_path </dev/tty 2>/dev/null || entered_path=""
-
-      # Expand ~ manually
-      entered_path="${entered_path/#\~/$HOME}"
-
-      if [[ -z "$entered_path" ]]; then
-        printf '  %sNo path entered, using current directory.%s\n' "$T_DIM" "$T_RESET" >/dev/tty
-        return 0
-      fi
-
-      if [[ ! -d "$entered_path" ]]; then
-        printf '  %s%sDirectory does not exist: %s%s\n' "$T_BOLD" "$T_RED" "$entered_path" "$T_RESET" >/dev/tty
-        exit 1
-      fi
-
-      WORKSPACE_DIR="$(cd "$entered_path" && pwd)"
-
-      if ! git -C "$WORKSPACE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        printf '  %s%sWarning: %s is not a git repository. Continuing anyway.%s\n' \
-          "$T_BOLD" "$T_YELLOW" "$WORKSPACE_DIR" "$T_RESET" >/dev/tty
-      fi
-      ;;
-    q|Q)
-      printf '%sGoodbye.%s\n' "$T_DIM" "$T_RESET" >/dev/tty
-      exit 0
-      ;;
-    *)
-      # Default: continue with current directory
-      ;;
-  esac
-}
 
 # ---------------------------------------------------------------------------
 # /settings interactive menu
@@ -661,48 +678,6 @@ interactive_settings_menu() {
   done
 }
 
-# ---------------------------------------------------------------------------
-# /workspace — change workspace directory interactively
-# ---------------------------------------------------------------------------
-change_workspace() {
-  local inline_path="$1"
-  local new_path=""
-
-  if [[ -n "$inline_path" ]]; then
-    # Path provided inline: /workspace /some/path
-    new_path="${inline_path/#\~/$HOME}"
-  else
-    # No path — prompt with read -e for tab completion
-    # Reset terminal state — Node's raw mode capture may leave it dirty
-    stty sane </dev/tty 2>/dev/null || true
-    printf '\n' >/dev/tty
-    printf '  %sCurrent workspace:%s %s\n' "$T_DIM" "$T_RESET" "$WORKSPACE_DIR" >/dev/tty
-    printf '  %sNew path:%s ' "$T_BOLD" "$T_RESET" >/dev/tty
-    read -r -e new_path </dev/tty 2>/dev/null || new_path=""
-    new_path="${new_path/#\~/$HOME}"
-  fi
-
-  if [[ -z "$new_path" ]]; then
-    printf '  %sNo path entered, workspace unchanged.%s\n\n' "$T_DIM" "$T_RESET" >/dev/tty
-    return
-  fi
-
-  if [[ ! -d "$new_path" ]]; then
-    printf '  %s%sDirectory does not exist: %s%s\n\n' "$T_BOLD" "$T_RED" "$new_path" "$T_RESET" >/dev/tty
-    return
-  fi
-
-  WORKSPACE_DIR="$(cd "$new_path" && pwd)"
-  load_settings
-  generate_workspace_context
-  ensure_categories
-
-  printf '  %s✓ Workspace set to %s%s\n' "$T_GREEN" "$WORKSPACE_DIR" "$T_RESET" >/dev/tty
-  if ! git -C "$WORKSPACE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    printf '  %s%sWarning: not a git repository%s\n' "$T_BOLD" "$T_YELLOW" "$T_RESET" >/dev/tty
-  fi
-  printf '\n' >/dev/tty
-}
 
 # ---------------------------------------------------------------------------
 # Auto-context generation
@@ -1293,7 +1268,7 @@ agent_run_generate() {
       fi
       codex exec \
         --full-auto \
-        --sandbox none \
+        --sandbox read-only \
         ${model_args[@]+"${model_args[@]}"} \
         --output-schema "$schema_file" \
         --output-last-message "$output_file" \
@@ -2304,10 +2279,10 @@ PHASE2_PROMPT
     push)   git_label="  ${T_DIM}→ commit & push${T_RESET}" ;;
   esac
 
-  local sub_info="Mode: ${execution_mode}${commit_push:+  |  git: $commit_push}  |  ${phase2_chars} chars prompt"
+  local sub_info="${execution_mode}${commit_push:+  →  git $commit_push}  │  ${phase2_chars} chars"
 
   local phase2_exit
-  if setup_output_window "Phase 2  $expert_name" "$sub_info"; then
+  if setup_output_window "$expert_name" "$sub_info" "$SETTING_AGENT" "$category"; then
     # Windowed mode: agent writes to file, renderer displays tail in window
     _start_window_renderer "$phase2_log_file"
     set +e
@@ -2384,11 +2359,6 @@ interactive_loop() {
       24)
         interactive_settings_menu
         ;;
-      25)
-        local ws_arg
-        ws_arg="$(cat "$capture_file")"
-        change_workspace "$ws_arg"
-        ;;
       26)
         discover_categories
         ;;
@@ -2415,19 +2385,6 @@ main() {
         print_help
         exit 0
         ;;
-      --workspace|-w)
-        if [[ -z "${2:-}" ]]; then
-          echo "Error: --workspace requires a directory path." >&2
-          exit 1
-        fi
-        local ws_path="${2/#\~/$HOME}"
-        if [[ ! -d "$ws_path" ]]; then
-          echo "Error: directory does not exist: $ws_path" >&2
-          exit 1
-        fi
-        WORKSPACE_DIR="$(cd "$ws_path" && pwd)"
-        shift 2
-        ;;
       --)
         shift
         positional+=("$@")
@@ -2441,10 +2398,7 @@ main() {
   done
   set -- "${positional[@]+"${positional[@]}"}"
 
-  # Load settings and detect workspace
-  load_settings
-  detect_workspace
-  # Reload settings in case workspace changed (picks up .prompter.json)
+  # Load settings
   load_settings
   # Generate workspace context once
   generate_workspace_context
