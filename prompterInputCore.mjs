@@ -6,6 +6,7 @@ const ENTER_ESC_13_TILDE = Buffer.from([0x1b, 0x5b, 0x31, 0x33, 0x7e]); // ESC [
 const SLASH_COMMANDS = [
   { cmd: "/help", desc: "Show help" },
   { cmd: "/settings", desc: "Configure agent & model" },
+  { cmd: "/experts", desc: "List discovered expertise categories" },
   { cmd: "/discover", desc: "Re-discover expertise categories" },
   { cmd: "/quit", desc: "Exit" },
 ];
@@ -386,6 +387,10 @@ export async function captureInputOnce({
         }
         if (command === "/settings") {
           finish({ type: "settings" });
+          return;
+        }
+        if (command === "/experts") {
+          finish({ type: "experts" });
           return;
         }
         if (command === "/discover") {

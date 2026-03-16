@@ -9,6 +9,7 @@ const EXIT_CODES = {
   RESET: 22,
   FAIL_CLOSED: 23,
   SETTINGS: 24,
+  EXPERTS: 25,
   DISCOVER: 26,
   ERROR: 1,
 };
@@ -92,6 +93,9 @@ async function main() {
       process.exit(EXIT_CODES.SETTINGS);
     }
 
+    if (result.type === "experts") {
+      process.exit(EXIT_CODES.EXPERTS);
+    }
 
     if (result.type === "discover") {
       process.exit(EXIT_CODES.DISCOVER);

@@ -275,6 +275,9 @@ _window_render_loop() {
     rows=$(tput lines 2>/dev/null) || rows=24
     cols=$(tput cols 2>/dev/null) || cols=80
 
+    # Clear entire screen before redrawing — prevents ghost lines on resize
+    printf '\e[2J'
+
     # Layout:  row 1=header, 2=sub, 3=border, 4..(R-2)=content, (R-1)=border, R=status
     local content_top=4
     local content_bottom=$((rows - 2))
@@ -515,7 +518,8 @@ ${T_BOLD}Prompter CLI${T_RESET}
 ${T_BOLD}Commands${T_RESET}
   /help             Show this help
   /settings         Configure agent, mode, and model
-  /discover         Re-discover project expertise categories
+  /experts          List discovered expertise categories
+  /discover         Re-discover expertise categories
   /quit             Exit the CLI
 
 ${T_BOLD}Usage${T_RESET}
@@ -532,6 +536,37 @@ ${T_BOLD}Configuration${T_RESET}
   Global:   ~/.config/prompter/settings.json
   Project:  .prompter.json (in workspace root)
 HELP
+}
+
+print_experts() {
+  resolve_categories_file
+
+  if [[ ! -f "$CATEGORIES_FILE" ]]; then
+    printf '\n  %sNo expertise categories discovered yet.%s\n' "$T_YELLOW" "$T_RESET"
+    printf '  %sRun /discover to analyze this workspace.%s\n\n' "$T_DIM" "$T_RESET"
+    return
+  fi
+
+  printf '\n'
+  printf '  %s%sExpertise Categories%s  %s(%s)%s\n' "$T_BOLD" "$T_CYAN" "$T_RESET" "$T_DIM" "$CATEGORIES_FILE" "$T_RESET"
+  printf '  %s%s%s\n' "$T_DIM" "$(printf '%.0s─' {1..50})" "$T_RESET"
+  python3 - "$CATEGORIES_FILE" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+for i, cat in enumerate(data.get('categories', []), 1):
+    name = cat.get('name', '?')
+    desc = cat.get('description', '')
+    hint = cat.get('expertPromptHint', '')
+    paths = cat.get('paths', [])
+    print(f"  \033[1m\033[33m{i}. {name}\033[0m")
+    print(f"     {desc}")
+    if paths:
+        print(f"     \033[2mPaths: {', '.join(paths)}\033[0m")
+    if hint:
+        print(f"     \033[2m{hint}\033[0m")
+    print()
+PY
 }
 
 print_startup_banner() {
@@ -580,6 +615,78 @@ print_done_banner() {
   else
     printf '  %s%s✗ Failed%s (exit %s)\n' "$T_BOLD" "$T_RED" "$T_RESET" "$exit_code"
   fi
+  print_separator
+  printf '\n'
+}
+
+print_execution_summary() {
+  local exit_code="$1"
+  local expert_name="$2"
+  local category="$3"
+  local summary_file="$4"
+  local log_file="$5"
+
+  # Elapsed time from _WINDOW_START_TIME if available
+  local elapsed_str=""
+  if [[ "${_WINDOW_START_TIME:-0}" -gt 0 ]]; then
+    local now elapsed_s mins secs
+    now=$(date +%s)
+    elapsed_s=$((now - _WINDOW_START_TIME))
+    mins=$((elapsed_s / 60))
+    secs=$((elapsed_s % 60))
+    if [[ $mins -gt 0 ]]; then
+      elapsed_str="${mins}m ${secs}s"
+    else
+      elapsed_str="${secs}s"
+    fi
+  fi
+
+  printf '\n'
+
+  # Header bar
+  local header_line
+  if [[ "$exit_code" -eq 0 ]]; then
+    header_line="  ${T_BOLD}${T_GREEN}✓ Done${T_RESET}"
+  else
+    header_line="  ${T_BOLD}${T_RED}✗ Failed${T_RESET} ${T_DIM}(exit ${exit_code})${T_RESET}"
+  fi
+  if [[ -n "$elapsed_str" ]]; then
+    header_line="${header_line}  ${T_DIM}│${T_RESET}  ${T_DIM}${elapsed_str}${T_RESET}"
+  fi
+  header_line="${header_line}  ${T_DIM}│${T_RESET}  ${T_YELLOW}${expert_name}${T_RESET}"
+  if [[ -n "$category" ]]; then
+    header_line="${header_line}  ${T_DIM}│${T_RESET}  ${T_DIM}${category}${T_RESET}"
+  fi
+
+  print_separator
+  printf '%s\n' "$header_line"
+  print_separator
+
+  # Show the agent's summary response
+  local summary=""
+  if [[ -f "$summary_file" ]] && [[ -s "$summary_file" ]]; then
+    summary="$(sed $'s/\x1b\[[0-9;]*[a-zA-Z]//g' "$summary_file")"
+  elif [[ -f "$log_file" ]] && [[ -s "$log_file" ]]; then
+    # Fallback: show the last 60 lines of the log
+    summary="$(tail -n 60 "$log_file" | sed $'s/\x1b\[[0-9;]*[a-zA-Z]//g')"
+  fi
+
+  if [[ -n "$summary" ]]; then
+    printf '\n'
+    # Print summary with light indentation
+    while IFS= read -r line; do
+      printf '  %s\n' "$line"
+    done <<< "$summary"
+    printf '\n'
+  fi
+
+  # Log file location
+  if [[ -f "$log_file" ]]; then
+    local total_lines
+    total_lines=$(wc -l < "$log_file" 2>/dev/null | tr -d ' ')
+    printf '  %sFull log: %s (%s lines)%s\n' "$T_DIM" "$log_file" "$total_lines" "$T_RESET"
+  fi
+
   print_separator
   printf '\n'
 }
@@ -1343,7 +1450,7 @@ agent_run_phase2() {
 # Used with windowed output mode.
 # ---------------------------------------------------------------------------
 agent_run_phase2_to_file() {
-  local prompt_file="$1" log_file="$2"
+  local prompt_file="$1" log_file="$2" summary_file="$3"
 
   case "$SETTING_AGENT" in
     codex)
@@ -1356,6 +1463,7 @@ agent_run_phase2_to_file() {
         --sandbox "$SETTING_CODEX_SANDBOX" \
         --cd "$WORKSPACE_DIR" \
         ${model_args[@]+"${model_args[@]}"} \
+        --output-last-message "$summary_file" \
         - < "$prompt_file" > "$log_file" 2>&1
       ;;
     claude)
@@ -1363,11 +1471,14 @@ agent_run_phase2_to_file() {
       if [[ -n "$SETTING_MODEL" ]]; then
         model_args=(--model "$SETTING_MODEL")
       fi
+      # stdout = final response (summary), stderr = tool logs
       claude -p "$(cat "$prompt_file")" \
         --print \
         ${model_args[@]+"${model_args[@]}"} \
         --allowedTools Edit,Write,Bash,Read,Glob,Grep \
-        --dangerously-skip-permissions > "$log_file" 2>&1
+        --dangerously-skip-permissions > "$summary_file" 2>"$log_file"
+      # Append summary to log so the window renderer sees it too
+      cat "$summary_file" >> "$log_file"
       ;;
     gemini)
       local model_args=()
@@ -1376,7 +1487,8 @@ agent_run_phase2_to_file() {
       fi
       gemini ${model_args[@]+"${model_args[@]}"} \
         --sandbox \
-        -p "$(cat "$prompt_file")" > "$log_file" 2>&1
+        -p "$(cat "$prompt_file")" > "$summary_file" 2>"$log_file"
+      cat "$summary_file" >> "$log_file"
       ;;
   esac
 }
@@ -2281,12 +2393,13 @@ PHASE2_PROMPT
 
   local sub_info="${execution_mode}${commit_push:+  →  git $commit_push}  │  ${phase2_chars} chars"
 
+  local phase2_summary_file="$tmp_dir/phase2_summary.txt"
   local phase2_exit
   if setup_output_window "$expert_name" "$sub_info" "$SETTING_AGENT" "$category"; then
     # Windowed mode: agent writes to file, renderer displays tail in window
     _start_window_renderer "$phase2_log_file"
     set +e
-    agent_run_phase2_to_file "$phase2_prompt_file" "$phase2_log_file"
+    agent_run_phase2_to_file "$phase2_prompt_file" "$phase2_log_file" "$phase2_summary_file"
     phase2_exit=$?
     set -e
     teardown_output_window "$phase2_exit"
@@ -2300,8 +2413,10 @@ PHASE2_PROMPT
     phase2_exit=${PIPESTATUS[0]}
     set -e
     stop_spinner
-    print_done_banner "$phase2_exit"
   fi
+
+  # Show summary after execution
+  print_execution_summary "$phase2_exit" "$expert_name" "$category" "$phase2_summary_file" "$phase2_log_file"
 
   rm -rf "$tmp_dir"
   return "$phase2_exit"
@@ -2358,6 +2473,9 @@ interactive_loop() {
         ;;
       24)
         interactive_settings_menu
+        ;;
+      25)
+        print_experts
         ;;
       26)
         discover_categories
