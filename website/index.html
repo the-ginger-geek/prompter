@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>prompter — AI-powered coding agent CLI</title>
+  <meta name="description" content="Route coding tasks to expert AI agents. Install prompter with a single command.">
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-dim: #7d8590;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --magenta: #bc8cff;
+      --cyan: #79c0ff;
+      --yellow: #d29922;
+      --red: #f85149;
+      --font-mono: 'SF Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-mono);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* Hero */
+    .hero {
+      padding: 80px 0 48px;
+      text-align: center;
+    }
+
+    .hero h1 {
+      font-size: 2.4rem;
+      font-weight: 700;
+      color: var(--cyan);
+      margin-bottom: 12px;
+    }
+
+    .hero .tagline {
+      color: var(--text-dim);
+      font-size: 1rem;
+      max-width: 480px;
+      margin: 0 auto 40px;
+    }
+
+    /* Install box */
+    .install-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin: 0 auto 16px;
+      max-width: 600px;
+      position: relative;
+      text-align: left;
+    }
+
+    .install-box .label {
+      color: var(--text-dim);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+    }
+
+    .install-box code {
+      display: block;
+      color: var(--green);
+      font-size: 0.95rem;
+      word-break: break-all;
+      padding-right: 40px;
+    }
+
+    .install-box .copy-btn {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      padding: 4px 10px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .install-box .copy-btn:hover {
+      color: var(--text);
+      border-color: var(--text-dim);
+    }
+
+    .install-box .copy-btn.copied {
+      color: var(--green);
+      border-color: var(--green);
+    }
+
+    .install-note {
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 0.8rem;
+      margin-bottom: 64px;
+    }
+
+    /* Terminal demo */
+    .terminal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 64px;
+      overflow: hidden;
+    }
+
+    .terminal-bar {
+      background: var(--border);
+      padding: 8px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .terminal-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+    .terminal-dot.red { background: var(--red); }
+    .terminal-dot.yellow { background: var(--yellow); }
+    .terminal-dot.green { background: var(--green); }
+
+    .terminal-body {
+      padding: 20px 24px;
+      font-size: 0.85rem;
+      line-height: 1.7;
+      overflow-x: auto;
+    }
+
+    .terminal-body .prompt { color: var(--text-dim); }
+    .terminal-body .cmd { color: var(--text); }
+    .terminal-body .dim { color: var(--text-dim); }
+    .terminal-body .cyan { color: var(--cyan); }
+    .terminal-body .green { color: var(--green); }
+    .terminal-body .magenta { color: var(--magenta); }
+    .terminal-body .yellow { color: var(--yellow); }
+    .terminal-body .bold { font-weight: 700; }
+
+    /* Features */
+    .features {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 64px;
+    }
+
+    @media (max-width: 560px) {
+      .features { grid-template-columns: 1fr; }
+    }
+
+    .feature {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+    }
+
+    .feature h3 {
+      color: var(--cyan);
+      font-size: 0.9rem;
+      margin-bottom: 6px;
+    }
+
+    .feature p {
+      color: var(--text-dim);
+      font-size: 0.8rem;
+      line-height: 1.5;
+    }
+
+    /* How it works */
+    .section-title {
+      color: var(--text);
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-bottom: 24px;
+    }
+
+    .steps {
+      margin-bottom: 64px;
+    }
+
+    .step {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .step-num {
+      flex-shrink: 0;
+      width: 28px;
+      height: 28px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      color: var(--cyan);
+      font-weight: 700;
+    }
+
+    .step-text h4 {
+      font-size: 0.85rem;
+      color: var(--text);
+      margin-bottom: 2px;
+    }
+
+    .step-text p {
+      font-size: 0.8rem;
+      color: var(--text-dim);
+    }
+
+    /* Prereqs */
+    .prereqs {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin-bottom: 64px;
+    }
+
+    .prereqs h3 {
+      font-size: 0.85rem;
+      color: var(--text);
+      margin-bottom: 12px;
+    }
+
+    .prereqs ul {
+      list-style: none;
+      padding: 0;
+    }
+
+    .prereqs li {
+      color: var(--text-dim);
+      font-size: 0.8rem;
+      padding: 4px 0;
+    }
+
+    .prereqs li::before {
+      content: "~";
+      color: var(--cyan);
+      margin-right: 8px;
+    }
+
+    .prereqs li span {
+      color: var(--text);
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 24px 0;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 0.75rem;
+    }
+
+    footer a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    footer a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <section class="hero">
+      <h1>prompter</h1>
+      <p class="tagline">Route coding tasks to expert AI agents. Describe what you need, and prompter picks the right specialist, investigates your codebase, and executes.</p>
+
+      <div class="install-box">
+        <div class="label">Install</div>
+        <code id="install-cmd">curl -fsSL https://prompter-7fe6d.web.app/get.sh | bash</code>
+        <button class="copy-btn" onclick="copyInstall()" id="copy-btn">copy</button>
+      </div>
+      <p class="install-note">Requires git, node, and python3. Works on macOS and Linux.</p>
+    </section>
+
+    <section class="terminal">
+      <div class="terminal-bar">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+      </div>
+      <div class="terminal-body">
+<span class="prompt">~/ </span><span class="cmd">cd my-project</span>
+<span class="prompt">~/my-project </span><span class="cmd">prompter</span>
+<br>
+<span class="dim">  </span><span class="bold cyan">prompter</span>
+<span class="dim">  ────────────────────────────────────────</span>
+<span class="dim">  Workspace:  ~/my-project</span>
+<span class="dim">  Agent:      codex</span>
+<br>
+<span class="dim">  /help for commands, /settings to configure</span>
+<br>
+<span class="yellow">  ❯ </span><span class="cmd">Fix the auth middleware returning 401 for valid tokens</span>
+<br>
+<span class="dim">  ────────────────────────────────────────────────────────────</span>
+<span class="dim">  Category:  </span>Bugfixer
+<span class="dim">  Expert:    </span><span class="yellow">Auth & Security Expert</span>
+<span class="dim">  Agent:     </span>codex
+<span class="dim">  ────────────────────────────────────────────────────────────</span>
+<br>
+<span class="dim">  </span><span class="bold green">[E]</span> Execute <span class="dim">(execute directly)</span>
+<span class="dim">  </span><span class="bold cyan">[P]</span> Plan    <span class="dim">(research + plan, then execute)</span>
+<span class="dim">  </span><span class="bold magenta">[L]</span> Loop    <span class="dim">(split into tasks, execute one-by-one)</span>
+      </div>
+    </section>
+
+    <div class="features">
+      <div class="feature">
+        <h3>Expert routing</h3>
+        <p>Phase 1 reads your codebase and selects a specialist agent tailored to the task.</p>
+      </div>
+      <div class="feature">
+        <h3>Three execution modes</h3>
+        <p>Execute directly, plan then execute, or loop through tasks with auto-commit.</p>
+      </div>
+      <div class="feature">
+        <h3>Multi-agent support</h3>
+        <p>Works with Codex, Claude Code, and Gemini CLI as execution backends.</p>
+      </div>
+      <div class="feature">
+        <h3>Codebase-aware</h3>
+        <p>Auto-detects project structure, categories, and testing conventions.</p>
+      </div>
+    </div>
+
+    <h2 class="section-title">How it works</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-text">
+          <h4>You describe the task</h4>
+          <p>Paste a bug report, feature request, or plain English description. Supports images too.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-text">
+          <h4>Phase 1: Expert prompt generation</h4>
+          <p>An AI agent reads the relevant source files, selects the right category, and writes a detailed execution prompt grounded in your actual code.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-text">
+          <h4>Phase 2: Execution</h4>
+          <p>A specialist agent executes the prompt — making changes, running tests, and optionally committing and pushing.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="prereqs">
+      <h3>Prerequisites</h3>
+      <ul>
+        <li><span>git</span> — to clone and update prompter</li>
+        <li><span>node</span> (18+) — interactive input handling</li>
+        <li><span>python3</span> — JSON parsing and task planning</li>
+        <li>At least one AI agent CLI: <span>codex</span>, <span>claude</span>, or <span>gemini</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <footer>
+    <div class="container">
+      v0.0.1 &middot; <a href="https://github.com/the-ginger-geek/prompter">GitHub</a>
+    </div>
+  </footer>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
+    import { getAnalytics, logEvent } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-analytics.js";
+
+    const app = initializeApp({
+      apiKey: "AIzaSyArAwjH5kZod9iEmCHMGMxIfKj9Aundtig",
+      authDomain: "prompter-7fe6d.firebaseapp.com",
+      projectId: "prompter-7fe6d",
+      storageBucket: "prompter-7fe6d.firebasestorage.app",
+      messagingSenderId: "825380719078",
+      appId: "1:825380719078:web:64cf1436178de6692a2e27",
+      measurementId: "G-LZY4GRC5NB"
+    });
+
+    const analytics = getAnalytics(app);
+
+    // Track copy-install clicks
+    window.copyInstall = function() {
+      const cmd = document.getElementById('install-cmd').textContent;
+      navigator.clipboard.writeText(cmd).then(() => {
+        const btn = document.getElementById('copy-btn');
+        btn.textContent = 'copied!';
+        btn.classList.add('copied');
+        logEvent(analytics, 'copy_install_command');
+        setTimeout(() => {
+          btn.textContent = 'copy';
+          btn.classList.remove('copied');
+        }, 2000);
+      });
+    };
+
+    // Track GitHub link clicks
+    document.querySelector('footer a')?.addEventListener('click', () => {
+      logEvent(analytics, 'click_github');
+    });
+  </script>
+</body>
+</html>

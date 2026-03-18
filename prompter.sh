@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+PROMPTER_VERSION="0.0.1"
+
 # Resolve through symlinks so PROMPTER_DIR points to the real source,
 # not e.g. /usr/local/bin when installed as a symlink.
 _resolve_script_dir() {
@@ -668,7 +670,7 @@ print_startup_banner() {
   fi
 
   printf '\n'
-  printf '  %s%sprompter%s\n' "$T_BOLD" "$T_CYAN" "$T_RESET"
+  printf '  %s%sprompter%s  %sv%s%s\n' "$T_BOLD" "$T_CYAN" "$T_RESET" "$T_DIM" "$PROMPTER_VERSION" "$T_RESET"
   printf '  %s%s%s\n' "$T_DIM" "$(printf '%.0s─' {1..40})" "$T_RESET"
   local cat_count=""
   if [[ -f "$CATEGORIES_FILE" ]]; then
@@ -2864,6 +2866,10 @@ main() {
     case "$1" in
       --help|-h)
         print_help
+        exit 0
+        ;;
+      --version|-v)
+        printf 'prompter %s\n' "$PROMPTER_VERSION"
         exit 0
         ;;
       --)
