@@ -2474,14 +2474,13 @@ ${WORKSPACE_CONTEXT}
 CATEGORIES:
 ${category_section}
 
-STEP 1 — INVESTIGATE THE CODEBASE:
-Before writing the expert prompt, you MUST use your tools to explore the actual source code relevant to the user's request. Do NOT rely solely on the project context above.
-- Use file search (Glob/find) to locate files mentioned or implied by the request.
-- Use content search (Grep/rg) to find relevant functions, classes, patterns, and constants.
-- Read the key files you find to understand the current implementation, data flow, and conventions.
-- If the request mentions errors, bugs, or specific behavior, trace the code path to understand how it works today.
-- Look at existing tests to understand testing patterns and coverage.
-Keep your investigation focused — spend your reads on the files most relevant to the request, not the entire codebase.
+STEP 1 — INVESTIGATE THE CODEBASE (scoped to the user's request only):
+Before writing the expert prompt, use your tools to read the source files that are directly related to what the user is asking for. Do NOT explore broadly or read unrelated code — only investigate what the user's request touches.
+- Search for files, functions, or constants that the user's request specifically mentions or clearly implies.
+- Read those files to understand the current implementation and conventions in that area.
+- If the request mentions an error or bug, trace that specific code path.
+- Check for existing tests related to the area the user is asking about.
+Do NOT read files outside the scope of the user's request. The goal is to ground the expert prompt in the real code for the specific area being changed, not to survey the whole project.
 
 STEP 2 — SELECT CATEGORY AND WRITE THE EXPERT PROMPT:
 1. Select the ONE category that best fits the user's request.
