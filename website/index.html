@@ -49,6 +49,16 @@
       font-weight: 700;
       color: var(--cyan);
       margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+    }
+
+    .hero h1 img {
+      width: 48px;
+      height: 48px;
+      border-radius: 10px;
     }
 
     .hero .tagline {
@@ -293,7 +303,7 @@
 <body>
   <div class="container">
     <section class="hero">
-      <h1>prompter</h1>
+      <h1><img src="favicon.png" alt="prompter logo">prompter</h1>
       <p class="tagline">Route coding tasks to expert AI agents. Describe what you need, and prompter picks the right specialist, investigates your codebase, and executes.</p>
 
       <div class="install-box">
