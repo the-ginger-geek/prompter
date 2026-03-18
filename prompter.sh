@@ -307,8 +307,8 @@ _window_render_loop() {
     rows=$(tput lines 2>/dev/null) || rows=24
     cols=$(tput cols 2>/dev/null) || cols=80
 
-    # Clear entire screen before redrawing — prevents ghost lines on resize
-    printf '\e[2J'
+    # Hide cursor during redraw to prevent flicker
+    printf '\e[?25l'
 
     # Layout:
     #   row 1        = header
@@ -443,6 +443,9 @@ _window_render_loop() {
       "$T_RESET"
 
     frame_i=$(( (frame_i + 1) % ${#frames[@]} ))
+
+    # Show cursor after redraw
+    printf '\e[?25h'
   done
 }
 
