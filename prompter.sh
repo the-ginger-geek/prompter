@@ -67,6 +67,7 @@ _LOOP_AUTO_CONTINUE=false
 # Update check — compares local HEAD with remote, with 24h cooldown
 # ---------------------------------------------------------------------------
 UPDATE_CHECK_FILE="$SETTINGS_DIR/.last_update_check"
+UPDATE_AVAILABLE_FILE="$SETTINGS_DIR/.update_available"
 _UPDATE_AVAILABLE=false
 
 check_for_updates() {
@@ -75,7 +76,24 @@ check_for_updates() {
     return
   fi
 
-  # Cooldown: skip if checked within the last 24 hours
+  local local_head
+  local_head="$(git -C "$PROMPTER_DIR" rev-parse HEAD 2>/dev/null)" || return
+
+  # If a previous check flagged an update, keep showing it until the user updates
+  if [[ -f "$UPDATE_AVAILABLE_FILE" ]]; then
+    local cached_head
+    cached_head="$(cat "$UPDATE_AVAILABLE_FILE" 2>/dev/null || echo "")"
+    # If local HEAD still matches what was cached, update hasn't been applied
+    if [[ "$cached_head" == "$local_head" ]]; then
+      _UPDATE_AVAILABLE=true
+      return
+    else
+      # User updated — clear the flag
+      rm -f "$UPDATE_AVAILABLE_FILE" 2>/dev/null || true
+    fi
+  fi
+
+  # Cooldown: only hit the network once every 24 hours
   if [[ -f "$UPDATE_CHECK_FILE" ]]; then
     local last_check
     last_check=$(cat "$UPDATE_CHECK_FILE" 2>/dev/null || echo 0)
@@ -91,13 +109,14 @@ check_for_updates() {
   mkdir -p "$SETTINGS_DIR" 2>/dev/null || true
   date +%s > "$UPDATE_CHECK_FILE" 2>/dev/null || true
 
-  # Compare local and remote HEAD (timeout after 3 seconds)
-  local local_head remote_head
-  local_head="$(git -C "$PROMPTER_DIR" rev-parse HEAD 2>/dev/null)" || return
+  # Compare local and remote HEAD
+  local remote_head
   remote_head="$(git -C "$PROMPTER_DIR" ls-remote --heads origin main 2>/dev/null | awk '{print $1}')" || return
 
   if [[ -n "$remote_head" && "$local_head" != "$remote_head" ]]; then
     _UPDATE_AVAILABLE=true
+    # Cache the local HEAD so we keep showing the notice until they update
+    printf '%s' "$local_head" > "$UPDATE_AVAILABLE_FILE" 2>/dev/null || true
   fi
 }
 
@@ -119,8 +138,8 @@ do_self_update() {
     new_version="$(grep -m1 'PROMPTER_VERSION=' "$PROMPTER_DIR/prompter.sh" | sed 's/.*"\(.*\)"/\1/')"
     printf '\n  %s%s✓ Updated to v%s%s\n\n' "$T_BOLD" "$T_GREEN" "$new_version" "$T_RESET"
 
-    # Clear the update check cooldown so next launch doesn't show stale notice
-    rm -f "$UPDATE_CHECK_FILE" 2>/dev/null || true
+    # Clear update state so next launch doesn't show stale notice
+    rm -f "$UPDATE_CHECK_FILE" "$UPDATE_AVAILABLE_FILE" 2>/dev/null || true
   else
     printf '\n  %s%s✗ Update failed.%s Try manually: cd %s && git pull\n\n' \
       "$T_BOLD" "$T_RED" "$T_RESET" "$PROMPTER_DIR"
