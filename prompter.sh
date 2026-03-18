@@ -2474,17 +2474,26 @@ ${WORKSPACE_CONTEXT}
 CATEGORIES:
 ${category_section}
 
-YOUR TASK:
+STEP 1 — INVESTIGATE THE CODEBASE:
+Before writing the expert prompt, you MUST use your tools to explore the actual source code relevant to the user's request. Do NOT rely solely on the project context above.
+- Use file search (Glob/find) to locate files mentioned or implied by the request.
+- Use content search (Grep/rg) to find relevant functions, classes, patterns, and constants.
+- Read the key files you find to understand the current implementation, data flow, and conventions.
+- If the request mentions errors, bugs, or specific behavior, trace the code path to understand how it works today.
+- Look at existing tests to understand testing patterns and coverage.
+Keep your investigation focused — spend your reads on the files most relevant to the request, not the entire codebase.
+
+STEP 2 — SELECT CATEGORY AND WRITE THE EXPERT PROMPT:
 1. Select the ONE category that best fits the user's request.
-2. Write expertPrompt — a comprehensive, self-contained prompt for a coding agent who is an expert in that category. This prompt must include EVERYTHING the agent needs to work autonomously:
+2. Write expertPrompt — a comprehensive, self-contained prompt for a coding agent who is an expert in that category. This prompt must include EVERYTHING the agent needs to work autonomously. Ground it in what you actually found in the code, not guesses:
 
    REQUIRED in expertPrompt:
    a) PROBLEM STATEMENT — What exactly needs to change and why. Include all relevant details, error messages, logs, or requirements from the user's input verbatim.
-   b) ROOT CAUSE HYPOTHESIS — If this is a bug, state your best hypothesis for the root cause based on the project structure. If a feature, describe where it fits architecturally.
-   c) KEY FILES — List the specific files and directories the agent should investigate first, using real paths from the project structure above. Be precise (e.g. "src/api/routes/auth.ts" not just "the auth module").
-   d) APPROACH — A clear step-by-step approach: what to read first, what to change, what patterns to follow based on the existing codebase.
-   e) CONSTRAINTS — What NOT to change. Adjacent code to preserve. Breaking changes to avoid. Style conventions to follow.
-   f) TESTING — Which test files to update or create. What scenarios to cover. Include the test command if known.
+   b) ROOT CAUSE HYPOTHESIS — If this is a bug, state your best hypothesis based on the actual code you read. If a feature, describe where it fits based on the real architecture you observed.
+   c) KEY FILES — List the specific files the agent should work with, using exact paths you confirmed exist. Include relevant line numbers or function names you found.
+   d) APPROACH — A concrete step-by-step approach grounded in the actual code patterns, naming conventions, and architecture you observed during investigation.
+   e) CONSTRAINTS — What NOT to change. Adjacent code to preserve. Breaking changes to avoid. Style conventions you observed in the codebase.
+   f) TESTING — Which test files to update or create, based on the existing test patterns you found. What scenarios to cover. Include the test command if known.
    g) ACCEPTANCE CRITERIA — How to verify the work is complete and correct.
 ${IMAGE_CONTEXT:+   h) IMAGES — The user has attached images. Instruct the agent to read and analyze each one using file-reading tools, and reference what the images show.}
 
