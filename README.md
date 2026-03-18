@@ -1,4 +1,4 @@
-# prompter v0.0.4
+# prompter v0.0.5
 
 Route coding tasks to expert AI agents. Describe what you need, and prompter picks the right specialist, investigates your codebase, and executes.
 
