@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROMPTER_VERSION="0.0.2"
+PROMPTER_VERSION="0.0.3"
 
 # Resolve through symlinks so PROMPTER_DIR points to the real source,
 # not e.g. /usr/local/bin when installed as a symlink.
