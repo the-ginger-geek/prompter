@@ -58,6 +58,9 @@ SETTING_DEFAULT_MODE="execute"
 SETTING_MODEL=""
 SETTING_CODEX_SANDBOX="workspace-write"
 
+# When true, loop mode skips interactive pauses between tasks.
+_LOOP_AUTO_CONTINUE=false
+
 ensure_settings_dir() {
   [[ -d "$SETTINGS_DIR" ]] || mkdir -p "$SETTINGS_DIR"
 }
@@ -212,12 +215,14 @@ _WINDOW_HEADER=""
 _WINDOW_SUB_HEADER=""
 _WINDOW_AGENT=""
 _WINDOW_CATEGORY=""
+_WINDOW_PROMPT_FILE=""
 
 setup_output_window() {
   local header="$1"
   local sub_header="${2:-}"
   local agent="${3:-$SETTING_AGENT}"
   local category="${4:-}"
+  local prompt_file="${5:-}"
 
   if [[ -z "$T_RESET" ]] || ! command -v tput >/dev/null 2>&1; then
     printf '\n  %s\n\n' "$header"
@@ -241,6 +246,7 @@ setup_output_window() {
   _WINDOW_SUB_HEADER="$sub_header"
   _WINDOW_AGENT="$agent"
   _WINDOW_CATEGORY="$category"
+  _WINDOW_PROMPT_FILE="$prompt_file"
 
   return 0
 }
@@ -251,7 +257,7 @@ _start_window_renderer() {
 
   _window_render_loop "$log_file" \
     "$_WINDOW_START_TIME" "$_WINDOW_HEADER" "$_WINDOW_SUB_HEADER" \
-    "$_WINDOW_AGENT" "$_WINDOW_CATEGORY" &
+    "$_WINDOW_AGENT" "$_WINDOW_CATEGORY" "$_WINDOW_PROMPT_FILE" &
   _WINDOW_RENDER_PID=$!
   disown "$_WINDOW_RENDER_PID" 2>/dev/null || true
 }
@@ -263,6 +269,30 @@ _window_render_loop() {
   local sub_header="$4"
   local agent="$5"
   local category="$6"
+  local prompt_file="${7:-}"
+
+  # Pre-load prompt lines (truncated to max 5 lines)
+  # Load prompt lines (capped to 8 for display — full prompt shown in summary)
+  local max_prompt_lines=8
+  local -a prompt_lines=()
+  local prompt_truncated=false
+  if [[ -n "$prompt_file" ]] && [[ -f "$prompt_file" ]]; then
+    local _pl _total=0
+    while IFS= read -r _pl; do
+      _total=$((_total + 1))
+      if [[ ${#prompt_lines[@]} -lt $max_prompt_lines ]]; then
+        prompt_lines+=("$_pl")
+      fi
+    done < "$prompt_file"
+    if [[ $_total -gt $max_prompt_lines ]]; then
+      prompt_truncated=true
+    fi
+  fi
+  local prompt_line_count=${#prompt_lines[@]}
+  # Add truncation indicator line
+  if [[ "$prompt_truncated" == "true" ]]; then
+    prompt_line_count=$((prompt_line_count + 1))
+  fi
 
   local frames=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
   local frame_i=0
@@ -278,8 +308,17 @@ _window_render_loop() {
     # Clear entire screen before redrawing — prevents ghost lines on resize
     printf '\e[2J'
 
-    # Layout:  row 1=header, 2=sub, 3=border, 4..(R-2)=content, (R-1)=border, R=status
-    local content_top=4
+    # Layout:
+    #   row 1        = header
+    #   row 2        = metadata
+    #   row 3..3+N-1 = prompt (up to 5 lines, white)
+    #   row 3+N      = border ────
+    #   row 3+N+1..(R-2) = content
+    #   row R-1      = border ────
+    #   row R        = status
+    local prompt_start=3
+    local border_row=$((prompt_start + prompt_line_count))
+    local content_top=$((border_row + 1))
     local content_bottom=$((rows - 2))
     local visible_lines=$((content_bottom - content_top + 1))
     if [[ $visible_lines -lt 1 ]]; then
@@ -326,8 +365,22 @@ _window_render_loop() {
     fi
     printf '  %s' "$meta"
 
-    # ---- Row 3: Top border ----
-    printf '\e[3;1H\e[2K'
+    # ---- Prompt lines (white text, max 8 + truncation indicator) ----
+    local pi=0
+    while [[ $pi -lt ${#prompt_lines[@]} ]]; do
+      local prow=$((prompt_start + pi))
+      local ptext="${prompt_lines[$pi]}"
+      ptext="${ptext:0:$((cols - 4))}"
+      printf '\e[%d;1H\e[2K  %s%s%s' "$prow" "$T_WHITE" "$ptext" "$T_RESET"
+      pi=$((pi + 1))
+    done
+    if [[ "$prompt_truncated" == "true" ]]; then
+      local trow=$((prompt_start + ${#prompt_lines[@]}))
+      printf '\e[%d;1H\e[2K  %s… (truncated — full prompt in summary)%s' "$trow" "$T_DIM" "$T_RESET"
+    fi
+
+    # ---- Top border ----
+    printf '\e[%d;1H\e[2K' "$border_row"
     printf '%s%s%s' "$T_DIM" "$border" "$T_RESET"
 
     # ---- Content area (bottom-anchored) ----
@@ -410,7 +463,29 @@ teardown_output_window() {
   rows=$(tput lines 2>/dev/null) || rows=24
   cols=$(tput cols 2>/dev/null) || cols=80
 
-  local content_top=4
+  # Load prompt lines for layout calculation
+  local max_prompt_lines=8
+  local -a prompt_lines=()
+  local prompt_truncated=false
+  if [[ -n "${_WINDOW_PROMPT_FILE:-}" ]] && [[ -f "$_WINDOW_PROMPT_FILE" ]]; then
+    local _pl _total=0
+    while IFS= read -r _pl; do
+      _total=$((_total + 1))
+      if [[ ${#prompt_lines[@]} -lt $max_prompt_lines ]]; then
+        prompt_lines+=("$_pl")
+      fi
+    done < "$_WINDOW_PROMPT_FILE"
+    if [[ $_total -gt $max_prompt_lines ]]; then
+      prompt_truncated=true
+    fi
+  fi
+  local prompt_line_count=${#prompt_lines[@]}
+  if [[ "$prompt_truncated" == "true" ]]; then
+    prompt_line_count=$((prompt_line_count + 1))
+  fi
+  local prompt_start=3
+  local border_row=$((prompt_start + prompt_line_count))
+  local content_top=$((border_row + 1))
   local content_bottom=$((rows - 2))
   local visible_lines=$((content_bottom - content_top + 1))
 
@@ -435,6 +510,8 @@ teardown_output_window() {
   border="$(printf '%.0s─' $(seq 1 "$cols"))"
 
   # ---- Final frame ----
+  printf '\e[2J'
+
   # Header
   printf '\e[1;1H\e[2K'
   printf '  %s%s%s%s' "$T_BOLD" "$T_CYAN" "$_WINDOW_HEADER" "$T_RESET"
@@ -447,8 +524,21 @@ teardown_output_window() {
   [[ -n "$_WINDOW_SUB_HEADER" ]] && meta="${meta}  ${T_DIM}│  ${_WINDOW_SUB_HEADER}${T_RESET}"
   printf '  %s' "$meta"
 
+  # Prompt lines (white, max 8 + truncation)
+  local pi=0
+  while [[ $pi -lt ${#prompt_lines[@]} ]]; do
+    local prow=$((prompt_start + pi))
+    local ptext="${prompt_lines[$pi]:0:$((cols - 4))}"
+    printf '\e[%d;1H\e[2K  %s%s%s' "$prow" "$T_WHITE" "$ptext" "$T_RESET"
+    pi=$((pi + 1))
+  done
+  if [[ "$prompt_truncated" == "true" ]]; then
+    local trow=$((prompt_start + ${#prompt_lines[@]}))
+    printf '\e[%d;1H\e[2K  %s… (truncated — full prompt in summary)%s' "$trow" "$T_DIM" "$T_RESET"
+  fi
+
   # Top border
-  printf '\e[3;1H\e[2K%s%s%s' "$T_DIM" "$border" "$T_RESET"
+  printf '\e[%d;1H\e[2K%s%s%s' "$border_row" "$T_DIM" "$border" "$T_RESET"
 
   # Final content render (bottom-anchored)
   if [[ -f "${_WINDOW_LOG_FILE:-}" ]] && [[ $total_lines -gt 0 ]]; then
@@ -493,12 +583,12 @@ teardown_output_window() {
       "$T_DIM" "$elapsed_str" "$total_lines" "$T_RESET"
   fi
 
-  # Show cursor, wait for keypress
+  # Show cursor, wait for keypress (skip in auto-continue loop mode)
   printf '\e[?25h'
 
-  if [[ -t 0 ]]; then
+  if [[ -t 0 ]] && ! $_LOOP_AUTO_CONTINUE; then
     printf '\e[%d;1H' "$rows"
-    printf '  %s%s│  Press any key...%s' "$T_DIM" "" "$T_RESET"
+    printf '  %s%s│  Hit enter to continue%s' "$T_BOLD" "$T_GREEN" "$T_RESET"
     read -r -n 1 -s </dev/tty 2>/dev/null || true
   fi
 
@@ -626,7 +716,7 @@ print_execution_summary() {
   local summary_file="$4"
   local log_file="$5"
 
-  # Elapsed time from _WINDOW_START_TIME if available
+  # Elapsed time
   local elapsed_str=""
   if [[ "${_WINDOW_START_TIME:-0}" -gt 0 ]]; then
     local now elapsed_s mins secs
@@ -641,54 +731,124 @@ print_execution_summary() {
     fi
   fi
 
+  local total_lines=0
+  if [[ -f "$log_file" ]]; then
+    total_lines=$(wc -l < "$log_file" 2>/dev/null | tr -d ' ')
+  fi
+
   printf '\n'
 
-  # Header bar
-  local header_line
+  # ═══════ Header bar ═══════
+  local cols
+  cols=$(tput cols 2>/dev/null) || cols=60
+  local wide_sep
+  wide_sep="$(printf '%.0s═' $(seq 1 "$cols"))"
+
   if [[ "$exit_code" -eq 0 ]]; then
-    header_line="  ${T_BOLD}${T_GREEN}✓ Done${T_RESET}"
+    printf '%s%s%s\n' "$T_GREEN" "$wide_sep" "$T_RESET"
+    printf '  %s%s✓ Complete%s' "$T_BOLD" "$T_GREEN" "$T_RESET"
   else
-    header_line="  ${T_BOLD}${T_RED}✗ Failed${T_RESET} ${T_DIM}(exit ${exit_code})${T_RESET}"
-  fi
-  if [[ -n "$elapsed_str" ]]; then
-    header_line="${header_line}  ${T_DIM}│${T_RESET}  ${T_DIM}${elapsed_str}${T_RESET}"
-  fi
-  header_line="${header_line}  ${T_DIM}│${T_RESET}  ${T_YELLOW}${expert_name}${T_RESET}"
-  if [[ -n "$category" ]]; then
-    header_line="${header_line}  ${T_DIM}│${T_RESET}  ${T_DIM}${category}${T_RESET}"
+    printf '%s%s%s\n' "$T_RED" "$wide_sep" "$T_RESET"
+    printf '  %s%s✗ Failed%s %s(exit %s)%s' "$T_BOLD" "$T_RED" "$T_RESET" "$T_DIM" "$exit_code" "$T_RESET"
   fi
 
-  print_separator
-  printf '%s\n' "$header_line"
-  print_separator
+  # Metadata line
+  printf '  %s│%s  %s%s%s' "$T_DIM" "$T_RESET" "$T_YELLOW" "$expert_name" "$T_RESET"
+  [[ -n "$category" ]] && printf '  %s│%s  %s%s%s' "$T_DIM" "$T_RESET" "$T_MAGENTA" "$category" "$T_RESET"
+  [[ -n "$elapsed_str" ]] && printf '  %s│%s  %s%s%s' "$T_DIM" "$T_RESET" "$T_CYAN" "$elapsed_str" "$T_RESET"
+  printf '  %s│%s  %s%s lines%s' "$T_DIM" "$T_RESET" "$T_DIM" "$total_lines" "$T_RESET"
+  printf '\n'
 
-  # Show the agent's summary response
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf '%s%s%s\n' "$T_GREEN" "$wide_sep" "$T_RESET"
+  else
+    printf '%s%s%s\n' "$T_RED" "$wide_sep" "$T_RESET"
+  fi
+
+  # ═══════ Summary body ═══════
   local summary=""
   if [[ -f "$summary_file" ]] && [[ -s "$summary_file" ]]; then
     summary="$(sed $'s/\x1b\[[0-9;]*[a-zA-Z]//g' "$summary_file")"
   elif [[ -f "$log_file" ]] && [[ -s "$log_file" ]]; then
-    # Fallback: show the last 60 lines of the log
-    summary="$(tail -n 60 "$log_file" | sed $'s/\x1b\[[0-9;]*[a-zA-Z]//g')"
+    summary="$(tail -n 80 "$log_file" | sed $'s/\x1b\[[0-9;]*[a-zA-Z]//g')"
   fi
 
   if [[ -n "$summary" ]]; then
     printf '\n'
-    # Print summary with light indentation
+    # Colorized rendering with markdown-aware highlighting
+    local in_code_block=false
     while IFS= read -r line; do
-      printf '  %s\n' "$line"
+      # Code block fences
+      if [[ "$line" == '```'* ]]; then
+        if $in_code_block; then
+          in_code_block=false
+          printf '  %s%s%s\n' "$T_DIM" "$line" "$T_RESET"
+        else
+          in_code_block=true
+          printf '  %s%s%s\n' "$T_DIM" "$line" "$T_RESET"
+        fi
+        continue
+      fi
+
+      # Inside code block — cyan
+      if $in_code_block; then
+        printf '  %s%s%s\n' "$T_CYAN" "$line" "$T_RESET"
+        continue
+      fi
+
+      case "$line" in
+        '# '*|'## '*|'### '*)
+          # Markdown headings — bold cyan
+          printf '  %s%s%s%s\n' "$T_BOLD" "$T_CYAN" "$line" "$T_RESET"
+          ;;
+        '- '*)
+          # Bullet points — green bullet, white text
+          printf '  %s%s-%s %s\n' "$T_GREEN" "$T_BOLD" "$T_RESET" "${line:2}"
+          ;;
+        [0-9]*'. '*)
+          # Numbered lists — yellow number, white text
+          local num="${line%%.*}"
+          local rest="${line#*.}"
+          printf '  %s%s%s.%s%s\n' "$T_YELLOW" "$T_BOLD" "$num" "$T_RESET" "$rest"
+          ;;
+        '  - '*)
+          # Nested bullets — dim bullet
+          printf '    %s•%s %s\n' "$T_DIM" "$T_RESET" "${line:4}"
+          ;;
+        *'✓'*|*'✅'*|*'PASS'*|*'pass'*|*' ok'*)
+          # Success indicators — green
+          printf '  %s%s%s\n' "$T_GREEN" "$line" "$T_RESET"
+          ;;
+        *'✗'*|*'❌'*|*'FAIL'*|*'Error'*|*'error'*)
+          # Failure indicators — red
+          printf '  %s%s%s\n' "$T_RED" "$line" "$T_RESET"
+          ;;
+        *'/'*'.'[a-z]*)
+          # Lines containing file paths — yellow
+          printf '  %s%s%s\n' "$T_YELLOW" "$line" "$T_RESET"
+          ;;
+        '')
+          # Blank lines
+          printf '\n'
+          ;;
+        *)
+          # Default — white
+          printf '  %s\n' "$line"
+          ;;
+      esac
     done <<< "$summary"
     printf '\n'
   fi
 
-  # Log file location
+  # ═══════ Footer ═══════
+  printf '%s%s%s\n' "$T_DIM" "$(printf '%.0s─' $(seq 1 "$cols"))" "$T_RESET"
   if [[ -f "$log_file" ]]; then
-    local total_lines
-    total_lines=$(wc -l < "$log_file" 2>/dev/null | tr -d ' ')
-    printf '  %sFull log: %s (%s lines)%s\n' "$T_DIM" "$log_file" "$total_lines" "$T_RESET"
+    printf '  %sLog:%s %s  %s(%s lines)%s\n' "$T_DIM" "$T_RESET" "$log_file" "$T_DIM" "$total_lines" "$T_RESET"
   fi
-
-  print_separator
-  printf '\n'
+  if [[ -f "$summary_file" ]] && [[ -s "$summary_file" ]]; then
+    printf '  %sSummary:%s %s\n' "$T_DIM" "$T_RESET" "$summary_file"
+  fi
+  printf '%s%s%s\n\n' "$T_DIM" "$(printf '%.0s─' $(seq 1 "$cols"))" "$T_RESET"
 }
 
 count_lines() {
@@ -1583,7 +1743,7 @@ PY
 # ---------------------------------------------------------------------------
 # Loop mode — split work into tasks, execute one-by-one, commit each
 # ---------------------------------------------------------------------------
-LOOP_MAX_ITERATIONS="${LOOP_MAX_ITERATIONS:-20}"
+LOOP_MAX_ITERATIONS="${LOOP_MAX_ITERATIONS:-50}"
 
 run_loop() {
   local expert_prompt="$1"
@@ -1593,15 +1753,16 @@ run_loop() {
 
   local progress_file="$WORKSPACE_DIR/.prompter/progress.txt"
   mkdir -p "$WORKSPACE_DIR/.prompter"
-  touch "$progress_file"
 
   local validation_block=""
   if [[ -n "$validation_cmd" ]]; then
-    validation_block="Validation: Run \`$validation_cmd\` after making changes to verify correctness."
+    validation_block="Run \`$validation_cmd\` after making changes to verify correctness."
   fi
 
   local loop_tmp_dir
   loop_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/prompter-loop.XXXXXX")"
+  local loop_start_time
+  loop_start_time=$(date +%s)
 
   # ------ Phase L1: Generate task breakdown ------
   local plan_prompt="$loop_tmp_dir/plan_prompt.txt"
@@ -1618,7 +1779,7 @@ run_loop() {
     "tasks": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 20,
+      "maxItems": 50,
       "items": {
         "type": "object",
         "required": ["id", "title", "description"],
@@ -1652,11 +1813,11 @@ ${progress_content:+Previous progress (from earlier loop iterations):
 $progress_content
 }
 Rules:
-- Each task should be a single logical unit of work that can be committed on its own.
+- Each task should be a single logical unit of work that can be committed and pushed on its own.
 - Order tasks by dependency — earlier tasks should not depend on later ones.
 - Each task title should be short (under 80 chars) and describe what changes.
 - Each task description should include: what to change, which files, and acceptance criteria.
-- Aim for 3-8 tasks. Don't over-split trivial work.
+- Size tasks appropriately — don't over-split trivial work, but don't combine unrelated changes.
 - If previous progress shows some tasks are done, only include remaining work.
 
 Output: JSON with key "tasks" containing an array of { id, title, description }.
@@ -1674,7 +1835,7 @@ PLAN_PROMPT
 
   stop_spinner
 
-  # Parse task list
+  # Parse task list — handle agent envelope unwrapping
   local tasks_json
   tasks_json="$(python3 - "$plan_output" <<'PY'
 import json, re, sys
@@ -1682,23 +1843,32 @@ import json, re, sys
 with open(sys.argv[1], 'r', encoding='utf-8') as f:
     raw = f.read().strip()
 
-data = None
-for attempt in [
-    lambda: json.loads(raw),
-    lambda: json.loads(re.search(r'```json\s*\n(.*?)\n\s*```', raw, re.DOTALL).group(1)),
-    lambda: json.loads(re.search(r'\{.*\}', raw, re.DOTALL).group(0)),
-]:
-    try:
-        data = attempt()
-        break
-    except Exception:
-        continue
+def extract(text):
+    for fn in [
+        lambda: json.loads(text),
+        lambda: json.loads(re.search(r'```json\s*\n(.*?)\n\s*```', text, re.DOTALL).group(1)),
+        lambda: json.loads(re.search(r'\{.*\}', text, re.DOTALL).group(0)),
+    ]:
+        try:
+            return fn()
+        except Exception:
+            pass
+    return None
+
+data = extract(raw)
+
+# Unwrap agent envelope (claude --output-format json)
+if data is not None and 'result' in data and 'tasks' not in data:
+    inner = data['result']
+    if isinstance(inner, str):
+        data = extract(inner)
+    elif isinstance(inner, dict):
+        data = inner
 
 if data is None or 'tasks' not in data:
     print("ERROR: Could not parse task plan", file=sys.stderr)
     sys.exit(1)
 
-# Normalize and output
 print(json.dumps(data['tasks']))
 PY
   )"
@@ -1715,39 +1885,52 @@ PY
   # Display task plan
   printf '\n'
   print_separator
-  printf '  %s%sLoop plan: %s tasks%s\n' "$T_BOLD" "$T_MAGENTA" "$task_count" "$T_RESET"
+  printf '  %s%sLoop plan: %s tasks%s  %s(agent restarts between each task)%s\n' \
+    "$T_BOLD" "$T_MAGENTA" "$task_count" "$T_RESET" "$T_DIM" "$T_RESET"
   print_separator
   python3 - "$tasks_json" <<'PY'
 import json, sys
 tasks = json.loads(sys.argv[1])
 for t in tasks:
-    print(f"  [{t['id']}] {t['title']}")
+    print(f"  \033[2m[\033[0m{t['id']}\033[2m]\033[0m {t['title']}")
 PY
   print_separator
   printf '\n'
 
-  # Write initial plan to progress file
-  python3 - "$tasks_json" "$progress_file" <<'PY'
+  # Pause so the user can review the plan before execution begins.
+  if [[ -t 0 ]]; then
+    printf '  %s%s▶  Hit enter to start with the tasks%s\n' "$T_BOLD" "$T_GREEN" "$T_RESET" >/dev/tty
+    read -r -s </dev/tty 2>/dev/null || true
+    printf '\n'
+  fi
+
+  # Enable auto-continue so task windows don't pause between iterations.
+  _LOOP_AUTO_CONTINUE=true
+
+  # Write initial progress file (overwrite — fresh for this loop run)
+  python3 - "$tasks_json" "$progress_file" "$expert_name" <<'PY'
 import json, sys
 from datetime import datetime
 
 tasks = json.loads(sys.argv[1])
 path = sys.argv[2]
+expert = sys.argv[3]
 
-with open(path, 'a', encoding='utf-8') as f:
-    f.write(f"\n--- Loop started {datetime.now().isoformat(timespec='seconds')} ---\n")
+with open(path, 'w', encoding='utf-8') as f:
+    f.write(f"# Loop: {expert}\n")
+    f.write(f"# Started: {datetime.now().isoformat(timespec='seconds')}\n")
+    f.write(f"# Tasks: {len(tasks)}\n\n")
     for t in tasks:
         f.write(f"[ ] {t['id']}. {t['title']}\n")
-    f.write("\n")
+    f.write("\n## Log\n\n")
 PY
 
   # ------ Phase L2: Execute each task ------
   local completed=0
   local failed=0
-  local iteration=0
 
   for task_idx in $(seq 0 $((task_count - 1))); do
-    iteration=$((iteration + 1))
+    local iteration=$((task_idx + 1))
 
     if [[ $iteration -gt $LOOP_MAX_ITERATIONS ]]; then
       printf '  %s%sMax iterations (%s) reached. Stopping loop.%s\n' \
@@ -1767,11 +1950,10 @@ print(f"task_desc={shlex.quote(t['description'])}")
 PY
     )"
 
-    printf '  %s%s[%s/%s]%s %s\n' "$T_BOLD" "$T_MAGENTA" "$iteration" "$task_count" "$T_RESET" "$task_title"
-
     # Build task prompt
     local task_prompt_file="$loop_tmp_dir/task_${task_id}_prompt.txt"
     local task_log_file="$loop_tmp_dir/task_${task_id}.log"
+    local task_summary_file="$loop_tmp_dir/task_${task_id}_summary.txt"
 
     local current_progress=""
     if [[ -s "$progress_file" ]]; then
@@ -1781,11 +1963,12 @@ PY
     cat > "$task_prompt_file" <<TASK_PROMPT
 ${expert_prompt}
 
+CATEGORY-SPECIFIC CONTEXT:
 ${cat_paths}
 
 ${IMAGE_CONTEXT}
 
-You are executing task ${task_id} of ${task_count} in a sequential loop.
+TASK ${task_id} of ${task_count} — This is a loop: the agent restarts between each task. Complete ONLY this task.
 
 Current task:
   Title: ${task_title}
@@ -1794,49 +1977,45 @@ Current task:
 Progress so far:
 ${current_progress}
 
-Instructions:
+INSTRUCTIONS:
 1. Complete ONLY this single task. Do not work on other tasks.
-2. ${validation_block:-Verify your changes work correctly.}
-3. After completing the task, make a git commit with a clear message describing what changed.
-4. IMPORTANT: If you complete the task successfully, include <promise>TASK_DONE</promise> in your final output.
-5. If you determine ALL tasks in the plan are now complete, include <promise>COMPLETE</promise> instead.
+2. Read the key files listed above before making changes.
+3. Follow existing code style and patterns in the project.
+4. ${validation_block:-Verify your changes work correctly.}
+5. If tests fail, fix the failures before finishing.
+6. After completing the task, create a git commit with a clear message describing what changed, then push to the remote.
 
-Response requirements:
+IMPORTANT RULES:
+- Do NOT refactor, rename, or "improve" code not directly related to this task.
+- Do NOT add comments, docstrings, or type annotations to code you didn't change.
+- Preserve backward compatibility unless explicitly asked to break it.
+
+RESPONSE FORMAT:
 - What you changed and why
 - Files changed
 - Validation results
 TASK_PROMPT
 
-    start_spinner "Task $task_id  $task_title"
+    # Run task in windowed output
+    local task_sub_info="task ${iteration}/${task_count}  │  commit & push"
+    local task_exit
 
-    set +e
-    agent_run_phase2 "$task_prompt_file" "$task_log_file"
-    local task_exit=${PIPESTATUS[0]}
-    set -e
-
-    stop_spinner
-
-    # Read the log to check for signals
-    local task_output=""
-    if [[ -f "$task_log_file" ]]; then
-      task_output="$(cat "$task_log_file")"
-    fi
-
-    # Check for rate limit
-    if detect_rate_limit "$task_output"; then
-      printf '\n'
-      printf '  %s%sRate limit hit.%s' "$T_BOLD" "$T_YELLOW" "$T_RESET"
-      if [[ -n "${RATE_LIMIT_RESET_ISO:-}" ]]; then
-        printf ' Resets at %s.' "$RATE_LIMIT_RESET_ISO"
-      fi
-      printf ' Sleeping %ss...\n' "$RATE_LIMIT_SLEEP_SECONDS"
-
-      sleep "$RATE_LIMIT_SLEEP_SECONDS"
-
-      # Retry this task
-      printf '  %sRetrying task %s...%s\n' "$T_DIM" "$task_id" "$T_RESET"
-      task_idx=$((task_idx - 1))
-      continue
+    if setup_output_window "Task ${iteration}/${task_count}: ${task_title}" \
+         "$task_sub_info" "$SETTING_AGENT" "$expert_name" "$task_prompt_file"; then
+      _start_window_renderer "$task_log_file"
+      set +e
+      agent_run_phase2_to_file "$task_prompt_file" "$task_log_file" "$task_summary_file"
+      task_exit=$?
+      set -e
+      teardown_output_window "$task_exit"
+    else
+      # Fallback: no window
+      start_spinner "Task $iteration/$task_count  $task_title"
+      set +e
+      agent_run_phase2 "$task_prompt_file" "$task_log_file"
+      task_exit=${PIPESTATUS[0]}
+      set -e
+      stop_spinner
     fi
 
     # Update progress file
@@ -1854,29 +2033,35 @@ from datetime import datetime
 
 path, task_id, title, status = sys.argv[1:5]
 
-# Update the checkbox in progress file
 with open(path, 'r', encoding='utf-8') as f:
     content = f.read()
 
+# Update checkbox
+mark = 'x' if status == 'done' else '!'
 old = f"[ ] {task_id}. {title}"
-new = f"[{'x' if status == 'done' else '!'}] {task_id}. {title} — {status}"
+new = f"[{mark}] {task_id}. {title}"
 content = content.replace(old, new)
 
-with open(path, 'a', encoding='utf-8') as f:
-    f.write(f"  Task {task_id} {status} at {datetime.now().isoformat(timespec='seconds')}\n")
+# Append log entry
+log_line = f"### Task {task_id} — {status} ({datetime.now().strftime('%H:%M:%S')})\n"
+content += log_line
 
 with open(path, 'w', encoding='utf-8') as f:
     f.write(content)
 PY
 
-    # Show task result
+    # Show task result between windows
     if [[ "$task_status" == "done" ]]; then
-      printf '  %s%s  ✓ Task %s done%s\n\n' "$T_BOLD" "$T_GREEN" "$task_id" "$T_RESET"
+      printf '  %s%s✓ Task %s/%s done%s  %s\n' "$T_BOLD" "$T_GREEN" "$iteration" "$task_count" "$T_RESET" "$task_title"
     else
-      printf '  %s%s  ✗ Task %s %s%s\n\n' "$T_BOLD" "$T_RED" "$task_id" "$task_status" "$T_RESET"
+      printf '  %s%s✗ Task %s/%s %s%s  %s\n' "$T_BOLD" "$T_RED" "$iteration" "$task_count" "$task_status" "$T_RESET" "$task_title"
     fi
 
     # Check for all-complete signal
+    local task_output=""
+    if [[ -f "$task_log_file" ]]; then
+      task_output="$(cat "$task_log_file")"
+    fi
     if [[ "$task_output" == *"<promise>COMPLETE</promise>"* ]]; then
       printf '  %s%sAll tasks complete!%s\n' "$T_BOLD" "$T_GREEN" "$T_RESET"
       break
@@ -1896,17 +2081,79 @@ PY
   done
 
   # ------ Summary ------
-  printf '\n'
-  print_separator
-  printf '  %s%sLoop complete%s\n' "$T_BOLD" "$T_MAGENTA" "$T_RESET"
-  printf '  %sCompleted:%s %s%s%s  %sFailed:%s %s%s%s  %sTotal:%s %s\n' \
-    "$T_DIM" "$T_RESET" "$T_GREEN" "$completed" "$T_RESET" \
-    "$T_DIM" "$T_RESET" "$T_RED" "$failed" "$T_RESET" \
-    "$T_DIM" "$T_RESET" "$task_count"
-  printf '  %sProgress:%s  %s\n' "$T_DIM" "$T_RESET" "$progress_file"
-  print_separator
-  printf '\n'
+  local now loop_elapsed mins secs elapsed_str
+  now=$(date +%s)
+  loop_elapsed=$((now - loop_start_time))
+  mins=$((loop_elapsed / 60))
+  secs=$((loop_elapsed % 60))
+  if [[ $mins -gt 0 ]]; then
+    elapsed_str="${mins}m ${secs}s"
+  else
+    elapsed_str="${secs}s"
+  fi
 
+  local cols
+  cols=$(tput cols 2>/dev/null) || cols=60
+  local wide_sep
+  wide_sep="$(printf '%.0s═' $(seq 1 "$cols"))"
+
+  printf '\n'
+  if [[ $failed -eq 0 ]]; then
+    printf '%s%s%s\n' "$T_GREEN" "$wide_sep" "$T_RESET"
+    printf '  %s%s✓ Loop Complete%s' "$T_BOLD" "$T_GREEN" "$T_RESET"
+  else
+    printf '%s%s%s\n' "$T_YELLOW" "$wide_sep" "$T_RESET"
+    printf '  %s%s⚠ Loop Finished with Failures%s' "$T_BOLD" "$T_YELLOW" "$T_RESET"
+  fi
+  printf '  %s│%s  %s%s%s' "$T_DIM" "$T_RESET" "$T_YELLOW" "$expert_name" "$T_RESET"
+  printf '  %s│%s  %s%s%s' "$T_DIM" "$T_RESET" "$T_CYAN" "$elapsed_str" "$T_RESET"
+  printf '  %s│%s  %s%s%s/%s%s%s/%s%s%s tasks' \
+    "$T_DIM" "$T_RESET" \
+    "$T_GREEN" "$completed" "$T_RESET" \
+    "$T_RED" "$failed" "$T_RESET" \
+    "$T_DIM" "$task_count" "$T_RESET"
+  printf '\n'
+  if [[ $failed -eq 0 ]]; then
+    printf '%s%s%s\n' "$T_GREEN" "$wide_sep" "$T_RESET"
+  else
+    printf '%s%s%s\n' "$T_YELLOW" "$wide_sep" "$T_RESET"
+  fi
+
+  # Show progress file contents
+  if [[ -f "$progress_file" ]]; then
+    printf '\n'
+    while IFS= read -r line; do
+      case "$line" in
+        '#'*)
+          printf '  %s%s%s\n' "$T_DIM" "$line" "$T_RESET"
+          ;;
+        '### Task'*done*)
+          printf '  %s%s%s\n' "$T_GREEN" "$line" "$T_RESET"
+          ;;
+        '### Task'*failed*)
+          printf '  %s%s%s\n' "$T_RED" "$line" "$T_RESET"
+          ;;
+        '[x]'*)
+          printf '  %s%s✓%s %s\n' "$T_GREEN" "$T_BOLD" "$T_RESET" "${line:4}"
+          ;;
+        '[!]'*)
+          printf '  %s%s✗%s %s\n' "$T_RED" "$T_BOLD" "$T_RESET" "${line:4}"
+          ;;
+        '[ ]'*)
+          printf '  %s○%s %s\n' "$T_DIM" "$T_RESET" "${line:4}"
+          ;;
+        *)
+          printf '  %s\n' "$line"
+          ;;
+      esac
+    done < "$progress_file"
+    printf '\n'
+    printf '  %sProgress file:%s %s\n' "$T_DIM" "$T_RESET" "$progress_file"
+  fi
+
+  printf '%s%s%s\n\n' "$T_DIM" "$(printf '%.0s─' $(seq 1 "$cols"))" "$T_RESET"
+
+  _LOOP_AUTO_CONTINUE=false
   rm -rf "$loop_tmp_dir"
 
   if [[ $failed -gt 0 ]]; then
@@ -1929,31 +2176,39 @@ input_path, category_path, expert_name_path, expert_prompt_path = sys.argv[1:5]
 with open(input_path, 'r', encoding='utf-8') as f:
     raw = f.read().strip()
 
-data = None
-
-# Try 1: direct JSON parse
-try:
-    data = json.loads(raw)
-except json.JSONDecodeError:
-    pass
-
-# Try 2: extract from ```json ... ``` fences
-if data is None:
-    m = re.search(r'```json\s*\n(.*?)\n\s*```', raw, re.DOTALL)
+def extract_json(text):
+    """Try multiple strategies to extract a JSON object from text."""
+    # Try direct parse
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # Try ```json fences
+    m = re.search(r'```json\s*\n(.*?)\n\s*```', text, re.DOTALL)
     if m:
         try:
-            data = json.loads(m.group(1))
-        except json.JSONDecodeError:
+            return json.loads(m.group(1))
+        except (json.JSONDecodeError, ValueError):
             pass
-
-# Try 3: find first { ... } block
-if data is None:
-    m = re.search(r'\{.*\}', raw, re.DOTALL)
+    # Try first { ... } block
+    m = re.search(r'\{.*\}', text, re.DOTALL)
     if m:
         try:
-            data = json.loads(m.group(0))
-        except json.JSONDecodeError:
+            return json.loads(m.group(0))
+        except (json.JSONDecodeError, ValueError):
             pass
+    return None
+
+data = extract_json(raw)
+
+# Unwrap agent envelope formats (claude --output-format json, etc.)
+# These have a "result" field containing the model's actual text response.
+if data is not None and 'result' in data and 'category' not in data:
+    inner = data['result']
+    if isinstance(inner, str):
+        data = extract_json(inner)
+    elif isinstance(inner, dict):
+        data = inner
 
 if data is None:
     print("ERROR: Could not extract JSON from Phase 1 output", file=sys.stderr)
@@ -2211,24 +2466,38 @@ run_once() {
   category_section="$(generate_category_section)"
 
   cat > "$phase1_prompt_file" <<PHASE1_PROMPT
-You are a prompt routing expert.
+You are a prompt routing expert. Your job is to analyze a user's request, select the right expertise category, and write a detailed execution prompt that a coding agent will use to complete the work autonomously.
 
+PROJECT CONTEXT:
 ${WORKSPACE_CONTEXT}
 
+CATEGORIES:
 ${category_section}
 
-Task:
-1. Determine which ONE category best fits the input.
-2. Write a high-quality execution prompt for an expert in that category.
-3. Reference concrete file paths from the project structure above.
-4. Include any logs, errors, or details from the user input.
-${IMAGE_CONTEXT:+5. The user has attached images — include instructions in the expert prompt to read and analyze them.}
+YOUR TASK:
+1. Select the ONE category that best fits the user's request.
+2. Write expertPrompt — a comprehensive, self-contained prompt for a coding agent who is an expert in that category. This prompt must include EVERYTHING the agent needs to work autonomously:
 
-Output: JSON with keys: category, expertName, expertPrompt.
+   REQUIRED in expertPrompt:
+   a) PROBLEM STATEMENT — What exactly needs to change and why. Include all relevant details, error messages, logs, or requirements from the user's input verbatim.
+   b) ROOT CAUSE HYPOTHESIS — If this is a bug, state your best hypothesis for the root cause based on the project structure. If a feature, describe where it fits architecturally.
+   c) KEY FILES — List the specific files and directories the agent should investigate first, using real paths from the project structure above. Be precise (e.g. "src/api/routes/auth.ts" not just "the auth module").
+   d) APPROACH — A clear step-by-step approach: what to read first, what to change, what patterns to follow based on the existing codebase.
+   e) CONSTRAINTS — What NOT to change. Adjacent code to preserve. Breaking changes to avoid. Style conventions to follow.
+   f) TESTING — Which test files to update or create. What scenarios to cover. Include the test command if known.
+   g) ACCEPTANCE CRITERIA — How to verify the work is complete and correct.
+${IMAGE_CONTEXT:+   h) IMAGES — The user has attached images. Instruct the agent to read and analyze each one using file-reading tools, and reference what the images show.}
 
-${IMAGE_CONTEXT}
+   The expertPrompt should start with: "You are the {expertName} for this project."
 
-Input prompt:
+3. Set expertName to a clear role (e.g. "Auth & Security Expert", "API Layer Specialist").
+
+Output: JSON with exactly these keys: category, expertName, expertPrompt
+${IMAGE_CONTEXT:+
+ATTACHED IMAGES:
+${IMAGE_CONTEXT}}
+
+USER REQUEST:
 ${effective_prompt}
 PHASE1_PROMPT
 
@@ -2338,42 +2607,64 @@ PHASE1_PROMPT
   esac
 
   if [[ "$execution_mode" == "plan" ]]; then
-    mode_instructions="Execution mode: PLAN THEN EXECUTE
-1. First, investigate the codebase thoroughly — read files, search for patterns, trace call chains.
-2. Produce a detailed, actionable plan with root cause analysis, specific files and line ranges to change, exact code changes, test strategy, and risk assessment.
-3. Once the plan is complete, execute the plan end-to-end.
-4. If your planning workflow presents recommended/default planning question answers, accept the defaults and proceed without waiting for user follow-up.
-5. After making changes, validate.
-6. If tests fail, fix the failures before finishing.
+    mode_instructions="EXECUTION MODE: PLAN THEN EXECUTE
 
-${validation_block}
-${git_block}"
+Phase A — Investigation:
+1. Read the key files listed above. Trace imports, call chains, and data flow.
+2. Search for related patterns (tests, config, types) to understand the full picture.
+3. Identify every file that needs to change and every file that could break.
+
+Phase B — Plan:
+4. Write a detailed plan: root cause analysis, each file + line range to change, exact changes, test strategy, risk assessment.
+5. If your planning workflow presents default answers, accept them and proceed — do not wait for user input.
+
+Phase C — Execute:
+6. Implement the plan end-to-end. Make minimal, focused changes — do not refactor unrelated code.
+7. Follow existing code style and patterns in the project. Match naming conventions, indentation, and architecture patterns you observe.
+8. Update or create tests for every behavioral change.
+
+Phase D — Validate:
+9. ${validation_block}
+10. If tests fail, fix the failures before finishing. Do not leave broken tests.
+${git_block:+11. ${git_block}}"
   else
-    mode_instructions="Execution mode: DIRECT EXECUTION
-1. Build a concrete plan before executing any changes.
-2. If your planning workflow presents recommended/default planning question answers, accept the defaults and proceed without waiting for user follow-up.
-3. Execute the work end-to-end.
-4. After making changes, validate.
-5. If tests fail, fix the failures before finishing.
+    mode_instructions="EXECUTION MODE: DIRECT EXECUTION
 
-${validation_block}
-${git_block}"
+1. Read the key files listed above to confirm your understanding before making any changes.
+2. Build a concrete plan, then execute it end-to-end.
+3. Make minimal, focused changes — do not refactor unrelated code.
+4. Follow existing code style and patterns in the project. Match naming conventions, indentation, and architecture patterns you observe.
+5. Update or create tests for every behavioral change.
+6. If your planning workflow presents default answers, accept them and proceed — do not wait for user input.
+7. ${validation_block}
+8. If tests fail, fix the failures before finishing. Do not leave broken tests.
+${git_block:+9. ${git_block}}"
   fi
 
   cat > "$phase2_prompt_file" <<PHASE2_PROMPT
 ${expert_prompt}
 
+CATEGORY-SPECIFIC CONTEXT:
 ${cat_paths}
 
 ${IMAGE_CONTEXT}
 
 ${mode_instructions}
 
-Response requirements:
-- The plan you produced and executed
-- What changed and why
-- Files changed
-- Validation results
+IMPORTANT RULES:
+- Do NOT refactor, rename, or "improve" code that is not directly related to the task.
+- Do NOT add comments, docstrings, or type annotations to code you didn't change.
+- Do NOT introduce new dependencies unless absolutely necessary.
+- Preserve backward compatibility unless explicitly asked to break it.
+- If you are unsure about something, read the relevant code first — do not guess.
+
+RESPONSE FORMAT:
+When complete, provide a summary including:
+- What you changed and why (be specific — file names, function names, line numbers)
+- Your root cause analysis (for bugs) or architectural rationale (for features)
+- Files changed (full paths)
+- Tests added or updated
+- Validation results (test output, type-check output)
 PHASE2_PROMPT
 
   local phase2_chars phase2_lines
@@ -2395,7 +2686,7 @@ PHASE2_PROMPT
 
   local phase2_summary_file="$tmp_dir/phase2_summary.txt"
   local phase2_exit
-  if setup_output_window "$expert_name" "$sub_info" "$SETTING_AGENT" "$category"; then
+  if setup_output_window "$expert_name" "$sub_info" "$SETTING_AGENT" "$category" "$expert_prompt_file"; then
     # Windowed mode: agent writes to file, renderer displays tail in window
     _start_window_renderer "$phase2_log_file"
     set +e
