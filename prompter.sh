@@ -153,11 +153,34 @@ ensure_settings_dir() {
 load_settings() {
   ensure_settings_dir
 
-  # Create default global settings if missing
+  # First launch — ask which agent to use
   if [[ ! -f "$SETTINGS_FILE" ]]; then
-    cat > "$SETTINGS_FILE" <<'JSON'
+    local chosen_agent="codex"
+    if [[ -t 0 ]]; then
+      printf '\n'
+      printf '  %s%sWelcome to prompter!%s\n\n' "$T_BOLD" "$T_CYAN" "$T_RESET"
+      printf '  Which AI agent would you like to use?\n\n'
+      printf '  %s%s[1]%s codex   %sOpenAI Codex CLI%s\n' "$T_BOLD" "$T_GREEN" "$T_RESET" "$T_DIM" "$T_RESET"
+      printf '  %s%s[2]%s claude  %sAnthropic Claude Code CLI%s\n' "$T_BOLD" "$T_CYAN" "$T_RESET" "$T_DIM" "$T_RESET"
+      printf '  %s%s[3]%s gemini  %sGoogle Gemini CLI%s\n\n' "$T_BOLD" "$T_YELLOW" "$T_RESET" "$T_DIM" "$T_RESET"
+      printf '  %sAgent%s [1/2/3]: ' "$T_BOLD" "$T_RESET"
+
+      local agent_choice
+      read -r -n 1 agent_choice </dev/tty 2>/dev/null || agent_choice=""
+      printf '\n'
+
+      case "$agent_choice" in
+        2) chosen_agent="claude" ;;
+        3) chosen_agent="gemini" ;;
+        *) chosen_agent="codex" ;;
+      esac
+
+      printf '\n  %s%s✓ Using %s%s\n\n' "$T_BOLD" "$T_GREEN" "$chosen_agent" "$T_RESET"
+    fi
+
+    cat > "$SETTINGS_FILE" <<JSON
 {
-  "agent": "codex",
+  "agent": "${chosen_agent}",
   "defaultMode": "execute",
   "codex": { "model": null, "sandbox": "workspace-write" },
   "claude": { "model": null },
