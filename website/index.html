@@ -281,6 +281,60 @@
       color: var(--text);
     }
 
+    /* Feature details */
+    .feature-details {
+      margin-bottom: 64px;
+    }
+
+    .feature-detail {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 24px 28px;
+      margin-bottom: 16px;
+    }
+
+    .feature-detail h3 {
+      font-size: 0.95rem;
+      color: var(--text);
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .feature-detail h3 .badge {
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .badge-green  { background: rgba(63,185,80,0.15); color: var(--green); }
+    .badge-cyan   { background: rgba(121,192,255,0.15); color: var(--cyan); }
+    .badge-magenta { background: rgba(188,140,255,0.15); color: var(--magenta); }
+    .badge-yellow { background: rgba(210,153,34,0.15); color: var(--yellow); }
+
+    .feature-detail p {
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      line-height: 1.6;
+      margin-top: 8px;
+    }
+
+    .feature-detail .terminal-inline {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px 16px;
+      margin-top: 12px;
+      font-size: 0.8rem;
+      line-height: 1.6;
+      overflow-x: auto;
+    }
+
     /* Footer */
     footer {
       border-top: 1px solid var(--border);
@@ -398,11 +452,73 @@
         <li>At least one AI agent CLI: <span>codex</span>, <span>claude</span>, or <span>gemini</span></li>
       </ul>
     </div>
+
+    <h2 class="section-title">Execution modes</h2>
+    <div class="feature-details">
+      <div class="feature-detail">
+        <h3><span class="badge badge-green">E</span> Execute</h3>
+        <p>The default mode. Prompter generates an expert prompt from your request and hands it straight to the agent for immediate execution. Best for focused tasks like bug fixes, small features, or refactors where you know what you want.</p>
+        <div class="terminal-inline">
+          <span class="dim">Mode [E/p/l]:</span> <span class="green bold">E</span><br>
+          <span class="dim">→ Agent reads code, makes changes, runs tests, done.</span>
+        </div>
+      </div>
+
+      <div class="feature-detail">
+        <h3><span class="badge badge-cyan">P</span> Plan</h3>
+        <p>The agent investigates your codebase first — reading files, tracing call chains, searching for patterns — and produces a detailed plan before making any changes. Once the plan is ready, it executes end-to-end. Ideal for complex tasks where you want the agent to think before it acts.</p>
+        <div class="terminal-inline">
+          <span class="dim">Mode [E/p/l]:</span> <span class="cyan bold">P</span><br>
+          <span class="dim">→ Phase 1: research &amp; plan. Phase 2: execute the plan.</span>
+        </div>
+      </div>
+
+      <div class="feature-detail">
+        <h3><span class="badge badge-magenta">L</span> Loop</h3>
+        <p>For large, multi-step work. Prompter breaks your request into discrete tasks, then executes them one by one — each in a fresh agent session with full context. Every completed task is committed and pushed automatically. The agent restarts between tasks to avoid context window limits and maintain focus.</p>
+        <div class="terminal-inline">
+          <span class="dim">Loop plan:</span> <span class="magenta bold">12 tasks</span> <span class="dim">(agent restarts between each task)</span><br>
+          <span class="dim">[</span>1<span class="dim">]</span> Extract auth middleware into separate module<br>
+          <span class="dim">[</span>2<span class="dim">]</span> Add input validation to API routes<br>
+          <span class="dim">[</span>3<span class="dim">]</span> Write integration tests for auth flow<br>
+          <span class="dim">...</span>
+        </div>
+      </div>
+    </div>
+
+    <h2 class="section-title">More features</h2>
+    <div class="feature-details">
+      <div class="feature-detail">
+        <h3><span class="badge badge-yellow">AI</span> Multi-agent support</h3>
+        <p>Prompter works with multiple AI agent backends. Switch between Codex, Claude Code, and Gemini CLI with a single setting. Each agent gets the same expert-crafted prompt, so you can pick the best tool for the job or compare results.</p>
+      </div>
+
+      <div class="feature-detail">
+        <h3><span class="badge badge-cyan">~</span> Auto-discovery</h3>
+        <p>On first run in a new project, prompter scans your codebase and discovers expertise categories automatically — no configuration needed. It identifies your tech stack, directory structure, and testing patterns to route future tasks to the right specialist.</p>
+      </div>
+
+      <div class="feature-detail">
+        <h3><span class="badge badge-green">?</span> Prompt review</h3>
+        <p>Before execution starts, you can optionally inspect the generated expert prompt. Review what the agent was told, regenerate it if it missed the mark, or abort entirely. Full transparency into what your agent will actually do.</p>
+      </div>
+
+      <div class="feature-detail">
+        <h3><span class="badge badge-magenta">&#x2197;</span> Git integration</h3>
+        <p>After completing a task, prompter can automatically commit and push changes. In loop mode, each task gets its own commit with a descriptive message. No manual git workflow needed — just review the results.</p>
+      </div>
+
+      <div class="feature-detail">
+        <h3><span class="badge badge-yellow">&#x1F5BC;</span> Image support</h3>
+        <p>Drag and drop screenshots, mockups, or error captures directly into your prompt. Prompter extracts image paths and passes them to the agent, so it can visually understand what you're describing.</p>
+      </div>
+    </div>
+
   </div>
 
   <footer>
     <div class="container">
-      v0.0.1 &middot; <a href="https://github.com/the-ginger-geek/prompter">GitHub</a>
+      v0.0.2 &middot; <a href="https://github.com/the-ginger-geek/prompter">GitHub</a>
     </div>
   </footer>
 
