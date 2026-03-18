@@ -724,9 +724,9 @@ ${T_BOLD}Commands${T_RESET}
   /quit             Exit the CLI
 
 ${T_BOLD}Usage${T_RESET}
-  ${T_DIM}Interactive:${T_RESET}   ./prompter.sh
-  ${T_DIM}One-shot:${T_RESET}     ./prompter.sh "your prompt"
-  ${T_DIM}Pipe:${T_RESET}         echo "your prompt" | ./prompter.sh
+  ${T_DIM}Interactive:${T_RESET}   prompter
+  ${T_DIM}One-shot:${T_RESET}     prompter "your prompt"
+  ${T_DIM}Pipe:${T_RESET}         echo "your prompt" | prompter
 
 ${T_BOLD}Agents${T_RESET}
   codex      OpenAI Codex CLI (default)
