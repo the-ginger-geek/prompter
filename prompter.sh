@@ -2556,6 +2556,70 @@ PHASE1_PROMPT
   printf '  %sAgent:%s     %s\n' "$T_DIM" "$T_RESET" "$SETTING_AGENT"
   print_separator
 
+  # --- Optional prompt validation ---
+  if [[ -t 0 ]]; then
+    printf '\n' >/dev/tty
+    printf '  %sWould you like to review the generated prompt?%s\n' "$T_BOLD" "$T_RESET" >/dev/tty
+    printf '  %s[v]%s View prompt     %s[enter]%s Skip & continue\n\n' \
+      "$T_BOLD" "$T_RESET" "$T_DIM" "$T_RESET" >/dev/tty
+    printf '  %sReview%s [v/Enter]: ' "$T_BOLD" "$T_RESET" >/dev/tty
+
+    local review_choice
+    read -r -n 1 review_choice </dev/tty 2>/dev/null || review_choice=""
+    printf '\n' >/dev/tty
+
+    if [[ "$review_choice" == "v" || "$review_choice" == "V" ]]; then
+      printf '\n' >/dev/tty
+      print_separator >/dev/tty
+      printf '  %s%sGenerated Expert Prompt:%s\n' "$T_BOLD" "$T_CYAN" "$T_RESET" >/dev/tty
+      print_separator >/dev/tty
+      printf '%s\n' "$expert_prompt" | while IFS= read -r line; do
+        printf '  %s%s%s\n' "$T_DIM" "$line" "$T_RESET"
+      done >/dev/tty
+      print_separator >/dev/tty
+      printf '\n' >/dev/tty
+      printf '  %s[enter]%s Continue     %s[r]%s Regenerate     %s[q]%s Abort\n\n' \
+        "$T_BOLD" "$T_RESET" "$T_BOLD" "$T_RESET" "$T_BOLD" "$T_RESET" >/dev/tty
+      printf '  %sAction%s [Enter/r/q]: ' "$T_BOLD" "$T_RESET" >/dev/tty
+
+      local validate_choice
+      read -r -n 1 validate_choice </dev/tty 2>/dev/null || validate_choice=""
+      printf '\n' >/dev/tty
+
+      if [[ "$validate_choice" == "q" || "$validate_choice" == "Q" ]]; then
+        printf '  %sAborted.%s\n' "$T_DIM" "$T_RESET"
+        rm -rf "$tmp_dir"
+        return 0
+      elif [[ "$validate_choice" == "r" || "$validate_choice" == "R" ]]; then
+        printf '\n'
+        start_spinner "Phase 1  regenerating expert prompt"
+        if ! agent_run_phase1 "$phase1_prompt_file" "$phase1_schema_file" "$phase1_output_file" "$phase1_log_file"; then
+          stop_spinner
+          echo "Phase 1 regeneration failed." >&2
+          rm -rf "$tmp_dir"
+          return 1
+        fi
+        stop_spinner
+        if ! extract_phase1_json "$phase1_output_file" "$category_file" "$expert_name_file" "$expert_prompt_file"; then
+          echo "Phase 1 output parse failed on regeneration." >&2
+          rm -rf "$tmp_dir"
+          return 1
+        fi
+        category="$(cat "$category_file")"
+        expert_name="$(cat "$expert_name_file")"
+        expert_prompt="$(cat "$expert_prompt_file")"
+        cat_paths="$(get_category_paths "$category")"
+
+        printf '\n'
+        print_separator
+        printf '  %sCategory:%s  %s\n' "$T_DIM" "$T_RESET" "$category"
+        printf '  %sExpert:%s    %s%s%s\n' "$T_DIM" "$T_RESET" "$T_YELLOW" "$expert_name" "$T_RESET"
+        print_separator
+        printf '  %s%sRegenerated — continuing.%s\n\n' "$T_BOLD" "$T_GREEN" "$T_RESET"
+      fi
+    fi
+  fi
+
   local execution_mode
   execution_mode="$(ask_execution_mode)"
 
