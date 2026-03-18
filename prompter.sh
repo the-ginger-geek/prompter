@@ -63,6 +63,70 @@ SETTING_CODEX_SANDBOX="workspace-write"
 # When true, loop mode skips interactive pauses between tasks.
 _LOOP_AUTO_CONTINUE=false
 
+# ---------------------------------------------------------------------------
+# Update check — compares local HEAD with remote, with 24h cooldown
+# ---------------------------------------------------------------------------
+UPDATE_CHECK_FILE="$SETTINGS_DIR/.last_update_check"
+_UPDATE_AVAILABLE=false
+
+check_for_updates() {
+  # Only check if we're in a git repo (installed via git clone)
+  if [[ ! -d "$PROMPTER_DIR/.git" ]]; then
+    return
+  fi
+
+  # Cooldown: skip if checked within the last 24 hours
+  if [[ -f "$UPDATE_CHECK_FILE" ]]; then
+    local last_check
+    last_check=$(cat "$UPDATE_CHECK_FILE" 2>/dev/null || echo 0)
+    local now
+    now=$(date +%s)
+    local elapsed=$(( now - last_check ))
+    if [[ $elapsed -lt 86400 ]]; then
+      return
+    fi
+  fi
+
+  # Record check time (even if the check fails, avoid retrying every launch)
+  mkdir -p "$SETTINGS_DIR" 2>/dev/null || true
+  date +%s > "$UPDATE_CHECK_FILE" 2>/dev/null || true
+
+  # Compare local and remote HEAD (timeout after 3 seconds)
+  local local_head remote_head
+  local_head="$(git -C "$PROMPTER_DIR" rev-parse HEAD 2>/dev/null)" || return
+  remote_head="$(git -C "$PROMPTER_DIR" ls-remote --heads origin main 2>/dev/null | awk '{print $1}')" || return
+
+  if [[ -n "$remote_head" && "$local_head" != "$remote_head" ]]; then
+    _UPDATE_AVAILABLE=true
+  fi
+}
+
+do_self_update() {
+  if [[ ! -d "$PROMPTER_DIR/.git" ]]; then
+    printf '  %s%sError:%s Not a git install — cannot self-update.\n' "$T_BOLD" "$T_RED" "$T_RESET" >&2
+    printf '  Reinstall with: curl -fsSL https://prompter-7fe6d.web.app/get.sh | bash\n'
+    exit 1
+  fi
+
+  printf '\n'
+  printf '  %sUpdating prompter...%s\n' "$T_DIM" "$T_RESET"
+
+  if git -C "$PROMPTER_DIR" pull --ff-only 2>&1 | while IFS= read -r line; do
+    printf '  %s%s%s\n' "$T_DIM" "$line" "$T_RESET"
+  done; then
+    # Read the new version from the updated script
+    local new_version
+    new_version="$(grep -m1 'PROMPTER_VERSION=' "$PROMPTER_DIR/prompter.sh" | sed 's/.*"\(.*\)"/\1/')"
+    printf '\n  %s%s✓ Updated to v%s%s\n\n' "$T_BOLD" "$T_GREEN" "$new_version" "$T_RESET"
+
+    # Clear the update check cooldown so next launch doesn't show stale notice
+    rm -f "$UPDATE_CHECK_FILE" 2>/dev/null || true
+  else
+    printf '\n  %s%s✗ Update failed.%s Try manually: cd %s && git pull\n\n' \
+      "$T_BOLD" "$T_RED" "$T_RESET" "$PROMPTER_DIR"
+  fi
+}
+
 ensure_settings_dir() {
   [[ -d "$SETTINGS_DIR" ]] || mkdir -p "$SETTINGS_DIR"
 }
@@ -627,6 +691,11 @@ ${T_BOLD}Agents${T_RESET}
   claude     Anthropic Claude Code CLI
   gemini     Google Gemini CLI
 
+${T_BOLD}Flags${T_RESET}
+  --version, -v    Show version
+  --update         Update to latest version
+  --help, -h       Show this help
+
 ${T_BOLD}Configuration${T_RESET}
   Global:   ~/.config/prompter/settings.json
   Project:  .prompter.json (in workspace root)
@@ -691,6 +760,10 @@ print(len(cats))
   printf '  %sConfig:%s     %s\n' "$T_DIM" "$T_RESET" "$config_status"
   if [[ -n "$cat_count" && "$cat_count" != "0" ]]; then
     printf '  %sExperts:%s    %s categories  %s(/discover to refresh)%s\n' "$T_DIM" "$T_RESET" "$cat_count" "$T_DIM" "$T_RESET"
+  fi
+  if $_UPDATE_AVAILABLE; then
+    printf '  %s%sUpdate available!%s  Run %sprompter --update%s to upgrade.\n' \
+      "$T_BOLD" "$T_YELLOW" "$T_RESET" "$T_CYAN" "$T_RESET"
   fi
   printf '\n'
   printf '  %s/help%s for commands, %s/settings%s to configure, %s/discover%s for categories.\n\n' \
@@ -2875,6 +2948,10 @@ main() {
         printf 'prompter %s\n' "$PROMPTER_VERSION"
         exit 0
         ;;
+      --update)
+        do_self_update
+        exit 0
+        ;;
       --)
         shift
         positional+=("$@")
@@ -2890,6 +2967,8 @@ main() {
 
   # Load settings
   load_settings
+  # Check for updates (24h cooldown, non-blocking)
+  check_for_updates
   # Generate workspace context once
   generate_workspace_context
   # Ensure expertise categories exist (discovers if missing)
