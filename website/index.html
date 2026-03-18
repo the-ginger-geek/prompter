@@ -62,10 +62,11 @@
     }
 
     .hero .tagline {
-      color: var(--text-dim);
-      font-size: 1rem;
-      max-width: 480px;
+      color: var(--text);
+      font-size: 1.1rem;
+      max-width: 520px;
       margin: 0 auto 40px;
+      font-weight: 400;
     }
 
     /* Install box */
@@ -169,37 +170,6 @@
     .terminal-body .magenta { color: var(--magenta); }
     .terminal-body .yellow { color: var(--yellow); }
     .terminal-body .bold { font-weight: 700; }
-
-    /* Features */
-    .features {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
-      margin-bottom: 64px;
-    }
-
-    @media (max-width: 560px) {
-      .features { grid-template-columns: 1fr; }
-    }
-
-    .feature {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 20px;
-    }
-
-    .feature h3 {
-      color: var(--cyan);
-      font-size: 0.9rem;
-      margin-bottom: 6px;
-    }
-
-    .feature p {
-      color: var(--text-dim);
-      font-size: 0.8rem;
-      line-height: 1.5;
-    }
 
     /* How it works */
     .section-title {
@@ -358,7 +328,7 @@
   <div class="container">
     <section class="hero">
       <h1><img src="favicon.png" alt="prompter logo">prompter</h1>
-      <p class="tagline">Route coding tasks to expert AI agents. Describe what you need, and prompter picks the right specialist, investigates your codebase, and executes.</p>
+      <p class="tagline">One command. Expert AI agent. No prompt engineering.</p>
 
       <div class="install-box">
         <div class="label">Install</div>
@@ -368,6 +338,7 @@
       <p class="install-note">Requires git, node, and python3. Works on macOS and Linux.</p>
     </section>
 
+    <h2 class="section-title" style="text-align: center; margin-bottom: 16px;">See it in action</h2>
     <section class="terminal">
       <div class="terminal-bar">
         <div class="terminal-dot red"></div>
@@ -424,16 +395,6 @@
       </div>
     </div>
 
-    <div class="prereqs">
-      <h3>Prerequisites</h3>
-      <ul>
-        <li><span>git</span> — to clone and update prompter</li>
-        <li><span>node</span> (18+) — interactive input handling</li>
-        <li><span>python3</span> — JSON parsing and task planning</li>
-        <li>At least one AI agent CLI: <span>codex</span>, <span>claude</span>, or <span>gemini</span></li>
-      </ul>
-    </div>
-
     <h2 class="section-title">Execution modes</h2>
     <div class="feature-details">
       <div class="feature-detail">
@@ -467,7 +428,7 @@
       </div>
     </div>
 
-    <h2 class="section-title">More features</h2>
+    <h2 class="section-title">Built for real workflows</h2>
     <div class="feature-details">
       <div class="feature-detail">
         <h3><span class="badge badge-yellow">AI</span> Multi-agent support</h3>
@@ -493,6 +454,16 @@
         <h3><span class="badge badge-yellow">&#x1F5BC;</span> Image support</h3>
         <p>Drag and drop screenshots, mockups, or error captures directly into your prompt. Prompter extracts image paths and passes them to the agent, so it can visually understand what you're describing.</p>
       </div>
+    </div>
+
+    <div class="prereqs">
+      <h3>Prerequisites</h3>
+      <ul>
+        <li><span>git</span> — to clone and update prompter</li>
+        <li><span>node</span> (18+) — interactive input handling</li>
+        <li><span>python3</span> — JSON parsing and task planning</li>
+        <li>At least one AI agent CLI: <span>codex</span>, <span>claude</span>, or <span>gemini</span></li>
+      </ul>
     </div>
 
   </div>
