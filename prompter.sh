@@ -2017,11 +2017,21 @@ PY
   print_separator
   printf '\n'
 
-  # Pause so the user can review the plan before execution begins.
+  # Ask the user whether to auto-loop or confirm after each task.
+  local loop_auto=true
   if [[ -t 0 ]]; then
-    printf '  %s%s▶  Hit enter to start with the tasks%s\n' "$T_BOLD" "$T_GREEN" "$T_RESET" >/dev/tty
-    read -r -s </dev/tty 2>/dev/null || true
     printf '\n'
+    printf '  %s%s▶  How should the loop run?%s\n' "$T_BOLD" "$T_GREEN" "$T_RESET" >/dev/tty
+    printf '    %sa%s) Auto-loop — run all tasks without pausing\n' "$T_BOLD" "$T_RESET" >/dev/tty
+    printf '    %sc%s) Confirm  — pause after each task for review\n' "$T_BOLD" "$T_RESET" >/dev/tty
+    printf '\n'
+    printf '  %sChoice [a/c]:%s ' "$T_BOLD" "$T_RESET" >/dev/tty
+    local loop_mode_choice
+    read -r -n 1 loop_mode_choice </dev/tty 2>/dev/null || loop_mode_choice="a"
+    printf '\n\n' >/dev/tty
+    if [[ "$loop_mode_choice" == "c" || "$loop_mode_choice" == "C" ]]; then
+      loop_auto=false
+    fi
   fi
 
   # Enable auto-continue so task windows don't pause between iterations.
@@ -2175,6 +2185,41 @@ PY
       printf '  %s%s✓ Task %s/%s done%s  %s\n' "$T_BOLD" "$T_GREEN" "$iteration" "$task_count" "$T_RESET" "$task_title"
     else
       printf '  %s%s✗ Task %s/%s %s%s  %s\n' "$T_BOLD" "$T_RED" "$iteration" "$task_count" "$task_status" "$T_RESET" "$task_title"
+    fi
+
+    # Show current progress
+    if [[ -f "$progress_file" ]]; then
+      printf '\n'
+      while IFS= read -r line; do
+        case "$line" in
+          '#'*|'## Log'|'')
+            ;;
+          '### Task'*)
+            ;;
+          '[x]'*)
+            printf '  %s%s✓%s %s\n' "$T_GREEN" "$T_BOLD" "$T_RESET" "${line:4}"
+            ;;
+          '[!]'*)
+            printf '  %s%s✗%s %s\n' "$T_RED" "$T_BOLD" "$T_RESET" "${line:4}"
+            ;;
+          '[ ]'*)
+            printf '  %s○%s %s\n' "$T_DIM" "$T_RESET" "${line:4}"
+            ;;
+        esac
+      done < "$progress_file"
+      printf '\n'
+    fi
+
+    # In confirm mode, pause after each successful task for review
+    if [[ "$loop_auto" == false && $task_exit -eq 0 && $iteration -lt $task_count && -t 0 ]]; then
+      printf '  %sContinue to next task?%s [Y/n]: ' "$T_BOLD" "$T_RESET" >/dev/tty
+      local confirm_choice
+      read -r -n 1 confirm_choice </dev/tty 2>/dev/null || confirm_choice=""
+      printf '\n' >/dev/tty
+      if [[ "$confirm_choice" == "n" || "$confirm_choice" == "N" ]]; then
+        printf '  %sStopping loop.%s\n' "$T_DIM" "$T_RESET"
+        break
+      fi
     fi
 
     # Check for all-complete signal
