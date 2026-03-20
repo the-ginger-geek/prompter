@@ -2597,12 +2597,33 @@ run_once() {
     return 0
   fi
 
+  # Ask whether to include codebase analysis in prompt generation.
+  local use_codebase=true
+  if [[ -t 0 ]]; then
+    printf '\n'
+    printf '  %s%s▶  Include codebase analysis in prompt generation?%s\n' "$T_BOLD" "$T_GREEN" "$T_RESET" >/dev/tty
+    printf '    %sy%s) Yes — investigate relevant code first %s(slower, more accurate)%s\n' "$T_BOLD" "$T_RESET" "$T_DIM" "$T_RESET" >/dev/tty
+    printf '    %sn%s) No  — rewrite prompt without reading code %s(faster)%s\n' "$T_BOLD" "$T_RESET" "$T_DIM" "$T_RESET" >/dev/tty
+    printf '\n'
+    printf '  %sChoice [y/n]:%s ' "$T_BOLD" "$T_RESET" >/dev/tty
+    local codebase_choice
+    read -r -n 1 codebase_choice </dev/tty 2>/dev/null || codebase_choice="y"
+    printf '\n\n' >/dev/tty
+    if [[ "$codebase_choice" == "n" || "$codebase_choice" == "N" ]]; then
+      use_codebase=false
+    fi
+  fi
+
   # Immediate feedback after Enter.
   local image_hint=""
   if [[ ${#EXTRACTED_IMAGES[@]} -gt 0 ]]; then
     image_hint=", ${#EXTRACTED_IMAGES[@]} image(s)"
   fi
-  start_spinner "Phase 1  generating expert prompt ($input_chars chars, $input_lines lines${image_hint})"
+  if [[ "$use_codebase" == true ]]; then
+    start_spinner "Phase 1  generating expert prompt with codebase analysis ($input_chars chars, $input_lines lines${image_hint})"
+  else
+    start_spinner "Phase 1  generating expert prompt ($input_chars chars, $input_lines lines${image_hint})"
+  fi
 
   local tmp_dir
   tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/prompter.XXXXXX")"
@@ -2630,6 +2651,30 @@ run_once() {
   local category_section
   category_section="$(generate_category_section)"
 
+  # Build the Phase 1 prompt — with or without codebase investigation
+  local codebase_step=""
+  if [[ "$use_codebase" == true ]]; then
+    codebase_step="STEP 1 — INVESTIGATE THE CODEBASE (scoped to the user's request only):
+Before writing the expert prompt, use your tools to read the source files that are directly related to what the user is asking for. Do NOT explore broadly or read unrelated code — only investigate what the user's request touches.
+- Search for files, functions, or constants that the user's request specifically mentions or clearly implies.
+- Read those files to understand the current implementation and conventions in that area.
+- If the request mentions an error or bug, trace that specific code path.
+- Check for existing tests related to the area the user is asking about.
+Do NOT read files outside the scope of the user's request. The goal is to ground the expert prompt in the real code for the specific area being changed, not to survey the whole project.
+
+STEP 2 — SELECT CATEGORY AND WRITE THE EXPERT PROMPT:"
+  else
+    codebase_step="STEP 1 — SELECT CATEGORY AND WRITE THE EXPERT PROMPT:
+NOTE: Do NOT read or investigate the codebase. Rewrite the user's prompt into a well-structured expert prompt based solely on what the user has described and the project context provided."
+  fi
+
+  local grounding_note=""
+  if [[ "$use_codebase" == true ]]; then
+    grounding_note="Ground it in what you actually found in the code, not guesses"
+  else
+    grounding_note="Base this on the user's description and project context — the executing agent will investigate the code itself"
+  fi
+
   cat > "$phase1_prompt_file" <<PHASE1_PROMPT
 You are a prompt routing expert. Your job is to analyze a user's request, select the right expertise category, and write a detailed execution prompt that a coding agent will use to complete the work autonomously.
 
@@ -2639,25 +2684,17 @@ ${WORKSPACE_CONTEXT}
 CATEGORIES:
 ${category_section}
 
-STEP 1 — INVESTIGATE THE CODEBASE (scoped to the user's request only):
-Before writing the expert prompt, use your tools to read the source files that are directly related to what the user is asking for. Do NOT explore broadly or read unrelated code — only investigate what the user's request touches.
-- Search for files, functions, or constants that the user's request specifically mentions or clearly implies.
-- Read those files to understand the current implementation and conventions in that area.
-- If the request mentions an error or bug, trace that specific code path.
-- Check for existing tests related to the area the user is asking about.
-Do NOT read files outside the scope of the user's request. The goal is to ground the expert prompt in the real code for the specific area being changed, not to survey the whole project.
-
-STEP 2 — SELECT CATEGORY AND WRITE THE EXPERT PROMPT:
+${codebase_step}
 1. Select the ONE category that best fits the user's request.
-2. Write expertPrompt — a comprehensive, self-contained prompt for a coding agent who is an expert in that category. This prompt must include EVERYTHING the agent needs to work autonomously. Ground it in what you actually found in the code, not guesses:
+2. Write expertPrompt — a comprehensive, self-contained prompt for a coding agent who is an expert in that category. This prompt must include EVERYTHING the agent needs to work autonomously. ${grounding_note}:
 
    REQUIRED in expertPrompt:
    a) PROBLEM STATEMENT — What exactly needs to change and why. Include all relevant details, error messages, logs, or requirements from the user's input verbatim.
-   b) ROOT CAUSE HYPOTHESIS — If this is a bug, state your best hypothesis based on the actual code you read. If a feature, describe where it fits based on the real architecture you observed.
-   c) KEY FILES — List the specific files the agent should work with, using exact paths you confirmed exist. Include relevant line numbers or function names you found.
-   d) APPROACH — A concrete step-by-step approach grounded in the actual code patterns, naming conventions, and architecture you observed during investigation.
-   e) CONSTRAINTS — What NOT to change. Adjacent code to preserve. Breaking changes to avoid. Style conventions you observed in the codebase.
-   f) TESTING — Which test files to update or create, based on the existing test patterns you found. What scenarios to cover. Include the test command if known.
+   b) ROOT CAUSE HYPOTHESIS — If this is a bug, state your best hypothesis. If a feature, describe where it likely fits.
+   c) KEY FILES — List the specific files the agent should work with.$(if [[ "$use_codebase" == true ]]; then echo " Use exact paths you confirmed exist. Include relevant line numbers or function names you found."; else echo " Suggest likely paths based on the project context, but instruct the agent to verify them."; fi)
+   d) APPROACH — A concrete step-by-step approach.$(if [[ "$use_codebase" == true ]]; then echo " Ground this in actual code patterns, naming conventions, and architecture you observed during investigation."; fi)
+   e) CONSTRAINTS — What NOT to change. Adjacent code to preserve. Breaking changes to avoid.
+   f) TESTING — Which test files to update or create. What scenarios to cover. Include the test command if known.
    g) ACCEPTANCE CRITERIA — How to verify the work is complete and correct.
 ${IMAGE_CONTEXT:+   h) IMAGES — The user has attached images. Instruct the agent to read and analyze each one using file-reading tools, and reference what the images show.}
 
@@ -2674,12 +2711,22 @@ USER REQUEST:
 ${effective_prompt}
 PHASE1_PROMPT
 
-  if ! agent_run_phase1 "$phase1_prompt_file" "$phase1_schema_file" "$phase1_output_file" "$phase1_log_file"; then
-    stop_spinner
-    echo "Phase 1 failed while generating expert prompt." >&2
-    echo "See log file: $phase1_log_file" >&2
-    rm -rf "$tmp_dir"
-    return 1
+  if [[ "$use_codebase" == true ]]; then
+    if ! agent_run_phase1 "$phase1_prompt_file" "$phase1_schema_file" "$phase1_output_file" "$phase1_log_file"; then
+      stop_spinner
+      echo "Phase 1 failed while generating expert prompt." >&2
+      echo "See log file: $phase1_log_file" >&2
+      rm -rf "$tmp_dir"
+      return 1
+    fi
+  else
+    if ! agent_run_generate "$phase1_prompt_file" "$phase1_schema_file" "$phase1_output_file" "$phase1_log_file"; then
+      stop_spinner
+      echo "Phase 1 failed while generating expert prompt." >&2
+      echo "See log file: $phase1_log_file" >&2
+      rm -rf "$tmp_dir"
+      return 1
+    fi
   fi
 
   stop_spinner
@@ -2757,11 +2804,20 @@ PHASE1_PROMPT
       elif [[ "$validate_choice" == "r" || "$validate_choice" == "R" ]]; then
         printf '\n'
         start_spinner "Phase 1  regenerating expert prompt"
-        if ! agent_run_phase1 "$phase1_prompt_file" "$phase1_schema_file" "$phase1_output_file" "$phase1_log_file"; then
-          stop_spinner
-          echo "Phase 1 regeneration failed." >&2
-          rm -rf "$tmp_dir"
-          return 1
+        if [[ "$use_codebase" == true ]]; then
+          if ! agent_run_phase1 "$phase1_prompt_file" "$phase1_schema_file" "$phase1_output_file" "$phase1_log_file"; then
+            stop_spinner
+            echo "Phase 1 regeneration failed." >&2
+            rm -rf "$tmp_dir"
+            return 1
+          fi
+        else
+          if ! agent_run_generate "$phase1_prompt_file" "$phase1_schema_file" "$phase1_output_file" "$phase1_log_file"; then
+            stop_spinner
+            echo "Phase 1 regeneration failed." >&2
+            rm -rf "$tmp_dir"
+            return 1
+          fi
         fi
         stop_spinner
         if ! extract_phase1_json "$phase1_output_file" "$category_file" "$expert_name_file" "$expert_prompt_file"; then
